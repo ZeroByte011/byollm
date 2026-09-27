@@ -412,6 +412,33 @@ describe("byollm log", () => {
   });
 });
 
+describe("byollm model <service> <name>, on an HTTP service", () => {
+  /**
+   * The verifier was built from the backend id alone — `createBackend(id, {})`
+   * — and an HTTP-class transport throws without its `baseUrl`. So the setter
+   * failed for every Ollama, LM Studio and vLLM service with "openai-http
+   * backend requires a baseUrl", before the probe could run and after the
+   * screen had said "Checking …". The daemon builds the same backend through
+   * `backendFor`, from the service's own config; this command now does too.
+   *
+   * Nothing is probed here: the HTTP transport has no canary, so the verifier
+   * answers "not asked" and the model is written, which is the documented
+   * shape for a local server. The test is that the command gets that far.
+   */
+  it("builds the backend from the service's config, and saves the model", async () => {
+    await writeConfig();
+    expect(await run("model", "local", "qwen3")).toBe(0);
+    expect(err).not.toContain("requires a baseUrl");
+    expect(out).toContain("local is now on qwen3");
+    const written = JSON.parse(await readFile(paths.config, "utf8")) as {
+      services: Record<string, { model: string; baseUrl: string }>;
+    };
+    expect(written.services["local"]?.model).toBe("qwen3");
+    // And the rest of the entry is as it was — the write is the model only.
+    expect(written.services["local"]?.baseUrl).toBe("http://127.0.0.1:1/v1");
+  });
+});
+
 describe("byollm services", () => {
   it("reports an unreachable backend as not advertised, and exits 1", async () => {
     await writeConfig();

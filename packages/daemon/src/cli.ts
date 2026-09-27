@@ -1196,10 +1196,24 @@ async function commandModel(
     const shown = await showModel(paths.config, service, io);
     return shown.code;
   }
+  /**
+   * The service's own backend, built the way the daemon builds it.
+   *
+   * This passed `createBackend(id, {})` — the id alone — and an HTTP-class
+   * transport throws without its `baseUrl`, so `byollm model <svc> <name>`
+   * failed for every Ollama, LM Studio and vLLM service with "openai-http
+   * backend requires a baseUrl" before the probe could run. The same hole
+   * `backendFor` was written to close for `run`; `setup` already goes through
+   * it. Read once here, for the verifier and the memory guard both.
+   */
+  const loaded = await loadConfig(paths.config).catch(() => undefined);
+  const configured = loaded?.config.services[service];
   const set = await setModel(
     { configPath: paths.config, service, model },
     io,
-    backendVerifier((id) => createBackend(id, {})),
+    backendVerifier((id) =>
+      backendFor({ type: id, baseUrl: configured?.baseUrl }),
+    ),
     /**
      * The memory guard on the owner's own command — B106.
      *
@@ -1211,12 +1225,11 @@ async function commandModel(
      * job — `minAvailableMemoryBytes`, one value, one meaning, whoever asked.
      */
     async (backendId) => {
-      const loaded = await loadConfig(paths.config).catch(() => undefined);
       if (loaded === undefined) return { ask: false };
       const { memory, pressure } = await readHostMemory();
       return modelLoadQuestion({
         backendId,
-        baseUrl: loaded.config.services[service]?.baseUrl,
+        baseUrl: configured?.baseUrl,
         model,
         memory,
         pressure,
