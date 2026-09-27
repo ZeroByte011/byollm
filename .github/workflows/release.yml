@@ -25,17 +25,13 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Read-only by default. A job that needs more says so at job level, and a
+# job-level `permissions` replaces this block rather than adding to it, so
+# what a job lists is all it gets. `ci` and `platforms` run the whole test
+# suite, including whatever a dependency's test hooks do, and inherited the
+# publish scopes for no reason; now only `release` holds them.
 permissions:
-  # Write, only so the release note can become a GitHub release — B084. A
-  # release with no note ships as the tag's subject line truncated, which is
-  # how an approved paragraph sat unpublished for a week. The alternative was
-  # a token, and widening the workflow's own scope is the smaller change.
-  contents: write
-  # Reading CI's verdict on this commit — the `ci` job below.
-  actions: read
-  # The whole point: this is what lets the runner mint an OIDC token npm will
-  # trust. Without it every publish fails with ENEEDAUTH.
-  id-token: write
+  contents: read
 
 jobs:
   # Nothing publishes on a commit CI has not passed — cloud_008 §3.7.
@@ -54,6 +50,10 @@ jobs:
   ci:
     name: CI passed on this commit
     runs-on: ubuntu-latest
+    permissions:
+      # Reading CI's verdict on this commit — `gh run list` below.
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Wait for CI
@@ -127,6 +127,16 @@ jobs:
     name: Publish to npm
     needs: [ci, platforms]
     runs-on: ubuntu-latest
+    permissions:
+      # Write, only so the release note can become a GitHub release — B084. A
+      # release with no note ships as the tag's subject line truncated, which
+      # is how an approved paragraph sat unpublished for a week. The
+      # alternative was a token, and widening this job's own scope is the
+      # smaller change.
+      contents: write
+      # The whole point: this is what lets the runner mint an OIDC token npm
+      # will trust. Without it every publish fails with ENEEDAUTH.
+      id-token: write
     steps:
       # Commit SHAs, not the moving `v4` tags; the trailing comment names the
       # release each SHA was resolved from. This job can mint an OIDC token
