@@ -149,9 +149,16 @@ jobs:
       # npm >= 11.5.1 is required for OIDC. Node 24 ships something newer
       # already; this makes the requirement explicit rather than inherited,
       # so a future runner image cannot quietly drop below it.
+      #
+      # An exact version, not `latest`. This is the program that performs the
+      # OIDC exchange, builds the provenance statement and uploads the
+      # tarballs, and `latest` installed whatever the registry served at that
+      # minute. 12.1.0 is what `latest` resolved to when this was pinned; its
+      # engines (node ^22.22.2 || ^24.15.0) are met by the 24 line above. Bump
+      # it deliberately, the way ci.yml bumps the Supabase CLI.
       - name: Ensure an npm that can do OIDC
         run: |
-          npm install -g npm@latest
+          npm install -g npm@12.1.0
           echo "npm $(npm --version), node $(node --version)"
           node -e 'const [a,b]=process.versions.node.split(".").map(Number);
             if (a<22||(a===22&&b<14)) { console.error("node too old for OIDC"); process.exit(1) }'
