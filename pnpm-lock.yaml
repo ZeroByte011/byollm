@@ -111,7 +111,7 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       zod:
-        specifier: ^4.4.3
+        specifier: 4.4.3
         version: 4.4.3
 
   packages/protocol:
@@ -120,7 +120,7 @@ importers:
         specifier: 0.8.4
         version: 0.8.4
       zod:
-        specifier: ^4.4.3
+        specifier: 4.4.3
         version: 4.4.3
 
   packages/relay:
@@ -129,7 +129,7 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       zod:
-        specifier: ^4.1.13
+        specifier: 4.4.3
         version: 4.4.3
     devDependencies:
       '@byollm/conformance':
