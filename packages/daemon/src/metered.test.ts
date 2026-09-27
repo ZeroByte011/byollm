@@ -7,7 +7,15 @@ import {
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import type {
   Backend,
   BackendRequest,
@@ -21,7 +29,13 @@ import { IngressLog } from "./ingress.js";
 import { daemonPaths, type DaemonPaths } from "./paths.js";
 import { Runner } from "./runner.js";
 import { SpendLedger } from "./spend.js";
-import { noSupervisor, removeTemp, testControlPlane } from "./test-support.js";
+import {
+  noSupervisor,
+  removeTemp,
+  testControlPlane,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 
 /** A daemon identity for tests: real keys, signing the real canonical form. */
 const TEST_KEYS = generateKeys(1_800_000_000_000);
@@ -52,6 +66,13 @@ beforeEach(async () => {
 afterEach(async () => {
   await removeTemp(dir);
 });
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 /** Answers instantly with a fixed-length reply, so spend is predictable. */
 class EchoBackend implements Backend {
@@ -331,7 +352,7 @@ describe("what the user is told about their money", () => {
       // A dead local port: no test may touch the real network. Note the
       // cost stays `metered` anyway — the registry decides that, not the
       // base URL ({@link MUSTS.COST_NOT_CONFIGURABLE}).
-      baseUrl: "http://127.0.0.1:1/v1",
+      baseUrl: backend.baseUrl,
       offer: "team",
       spend: { acknowledged: true, dailyCapCents: 250 },
     });
@@ -366,7 +387,7 @@ describe("what the user is told about their money", () => {
   });
 
   it("says an unshared metered backend is the owner's work only", async () => {
-    await config({ type: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    await config({ type: "openai", baseUrl: backend.baseUrl });
 
     await run("status");
     expect(out).toContain("not shared, so nobody else can spend on it");
@@ -388,7 +409,7 @@ describe("what the user is told about their money", () => {
      */
     await config({
       type: "openai",
-      baseUrl: "http://127.0.0.1:1/v1",
+      baseUrl: backend.baseUrl,
       kinds: ["llm.generate", "llm.chat"],
       offer: "team",
       spend: { acknowledged: true, dailyCapCents: 250 },
@@ -413,7 +434,7 @@ describe("what the user is told about their money", () => {
      */
     await config({
       type: "openai",
-      baseUrl: "http://127.0.0.1:1/v1",
+      baseUrl: backend.baseUrl,
       offer: "private",
       spend: { acknowledged: true },
     });
@@ -428,7 +449,13 @@ describe("what the user is told about their money", () => {
       paths.config,
       JSON.stringify({
         services: {
-          paid: { model: "m", kinds: ["llm.generate"], type: "ollama" },
+          paid: {
+            model: "m",
+            kinds: ["llm.generate"],
+            type: "ollama",
+            // Not left on Ollama's default port — see `unreachableBackend`.
+            baseUrl: backend.baseUrl,
+          },
           sub: { model: "sonnet", kinds: ["llm.chat"], type: "claude-cli" },
         },
       }),

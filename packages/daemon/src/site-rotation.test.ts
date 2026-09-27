@@ -12,14 +12,26 @@ import {
   type PublicIdentity,
   type Succession,
 } from "@byollm/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { Budgets } from "./budgets.js";
 import { ProtocolClient } from "./client.js";
 import { DaemonConfig, resolveConfig } from "./config.js";
 import { IngressLog } from "./ingress.js";
 import { Runner, type RunnerEvent } from "./runner.js";
 import { SpendLedger } from "./spend.js";
-import { removeTemp } from "./test-support.js";
+import {
+  removeTemp,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 
 /**
  * A site that rotates its key — byollm_009 Amendment C.
@@ -49,6 +61,13 @@ const id = (keys: typeof K1) => keyId(publicIdentityOf(keys).identity);
 
 let dir: string;
 let events: RunnerEvent[];
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "byollm-rotation-"));
@@ -108,7 +127,7 @@ async function runnerWith(
           model: "m",
           kinds: ["llm.generate"],
           type: "openai-http",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: backend.baseUrl,
           offer: "private",
         },
       },
