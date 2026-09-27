@@ -141,6 +141,7 @@ describe("byollm pause / resume — removed", () => {
        to reach this line — which is where it did its damage, outranking
        every other state on the one screen people check. */
     await mkdir(paths.root, { recursive: true });
+    await writeConfig();
     await writeFile(join(paths.root, "paused"), "2026-09-01T00:00:00.000Z\n");
     await run("status");
     expect(out).not.toContain("PAUSED");
@@ -823,6 +824,7 @@ describe("byollm services speaks for the shell, not the daemon", () => {
    * background agent cannot. So the command stops claiming to know.
    */
   it("does not promise what the daemon will advertise", async () => {
+    await writeConfig();
     await run("services");
     expect(out).toContain("from this shell");
     expect(out).not.toContain("will be advertised");
@@ -842,6 +844,7 @@ describe("byollm services speaks for the shell, not the daemon", () => {
     });
     await mkdir(dirname(plan.unitPath), { recursive: true });
     await writeFile(plan.unitPath, "", "utf8");
+    await writeConfig();
 
     await runCli(["services"], { paths, io: io(), service });
     expect(out).toContain("your shell's view");
@@ -852,6 +855,7 @@ describe("byollm services speaks for the shell, not the daemon", () => {
     // The control. A warning on every invocation is a warning nobody reads,
     // and somebody running the daemon in a terminal has no divergence to warn
     // about — their shell *is* the daemon's environment.
+    await writeConfig();
     await run("services");
     expect(out).not.toContain("your shell's view");
   });
@@ -901,6 +905,7 @@ describe("a device that is running and invisible", () => {
   it("says nothing about a handful of failures", async () => {
     // One refusal is noise, and a warning on every blip is a warning nobody
     // reads. The threshold is the whole difference between a state and a log.
+    await writeConfig();
     await health({ at: Date.now(), consecutiveFailures: 2 });
     await run("status");
     expect(out).toMatch(/^state: running$/m);
@@ -911,6 +916,10 @@ describe("a device that is running and invisible", () => {
     // No file is not "healthy" — it is "this daemon has not said", which is
     // also the state of one that predates the file. Both read as running,
     // which is the honest collapse: nothing here claims otherwise.
+    //
+    // On a machine somebody HAS set up: a config is what separates "the
+    // daemon has not said" from "nothing has ever been here to say it".
+    await writeConfig();
     await run("status");
     expect(out).toMatch(/^state: running$/m);
   });
@@ -923,6 +932,43 @@ describe("a device that is running and invisible", () => {
     await health({ at: Date.now(), consecutiveFailures: 99 });
     await run("status");
     expect(out).toContain("NOT REPORTING");
+  });
+});
+
+describe("a machine nobody has set up", () => {
+  /**
+   * The first two commands a fresh install types, and they sent each other
+   * round in a circle. `loadConfig` answers a missing file with the built-in
+   * default — right for a daemon, which has to run on something — and both
+   * screens printed that default as if somebody had chosen it: `services`
+   * listed an Ollama at 11434, probed it, and pointed at `byollm model`,
+   * which refused because there was no config; `status` said `running` about
+   * a device on which nothing had ever run.
+   */
+  it("services says there is nothing, and what to run, rather than listing the default", async () => {
+    expect(await run("services")).toBe(1);
+    expect(out).toContain("no config at");
+    expect(out).toContain("byollm setup");
+    // The default is the daemon's fallback, not a service this machine has.
+    expect(out).not.toContain("ollama");
+    expect(out).not.toContain("11434");
+    expect(out).not.toContain("byollm model");
+  });
+
+  it("status does not claim to be running", async () => {
+    expect(await run("status")).toBe(0);
+    expect(out).toMatch(/^state: NOT SET UP$/m);
+    expect(out).not.toMatch(/^state: running$/m);
+    expect(out).toContain("byollm setup");
+    expect(out).not.toContain("llama3.2");
+  });
+
+  it("status reads running once a config exists, as before", async () => {
+    // The control: the headline is about the file's absence, not its contents.
+    await writeConfig();
+    expect(await run("status")).toBe(0);
+    expect(out).toMatch(/^state: running$/m);
+    expect(out).not.toContain("NOT SET UP");
   });
 });
 
