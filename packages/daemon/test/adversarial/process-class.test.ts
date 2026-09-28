@@ -200,6 +200,23 @@ describe("process-class corpus [NO_SHELL_INTERPOLATION, NO_PAYLOAD_ROUTING]", ()
       expect(report.argv).not.toContain("--add-dir");
       expect(report.argv).not.toContain("--settings");
 
+      // 4a. `--restricted` survives every payload — BY-01.
+      //
+      // Named positively, in the same spirit as codex's `--disable` list
+      // below, because it is not a default: without it the CLI's `@`-mention
+      // preprocessor expands `@/absolute/path` and `@~/path` *before* the
+      // model turn, where `--tools ""` cannot reach it, and `PATH_AT_FILE` and
+      // `PATH_HOME_SSH` in the corpus above were passing this whole file while
+      // that was true. **The probe is why**: it reports the argv faithfully and
+      // has no preprocessor of its own, so a test that only asks "did the
+      // payload arrive verbatim" can never see a hole in the real binary's
+      // input handling. `file-mentions-stay-outside.test.ts` is the row that
+      // can — this line only guarantees the flag is still in the vector every
+      // payload produces.
+      expect(report.argv).toContain("--restricted");
+      // Nothing a payload could add that would widen the confinement back out.
+      expect(report.argv).not.toContain("--setting-sources");
+
       // 5. The environment holds the allowlist and nothing else we control.
       expect(report.env["ANTHROPIC_API_KEY"]).toBeUndefined();
       expect(report.env["AWS_SECRET_ACCESS_KEY"]).toBeUndefined();

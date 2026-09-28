@@ -124,16 +124,24 @@ describe.runIf(LIVE)("codex runs with no tools [byollm_004 §2]", () => {
   );
 });
 
-describe.runIf(!LIVE)("codex tool check", () => {
-  it("is not running, and says so", () => {
-    // A security check that skips silently is a security check nobody misses
-    // when it stops running. This one leaves a line in the output naming
-    // itself and how to run it.
-    expect(
-      true,
-      "codex tool-disabling check did NOT run (set BYOLLM_CODEX_LIVE=1 with " +
-        "the CLI signed in). The --disable list in codex-cli.ts is unverified " +
-        "in this run.",
-    ).toBe(true);
-  });
-});
+if (!LIVE) {
+  /*
+   * A security check that skips silently is a security check nobody misses when
+   * it stops running — and this file said so while skipping silently.
+   *
+   * What was here was `expect(true, "did NOT run").toBe(true)`, which prints
+   * nothing: vitest shows an assertion's message only when it fails, so the
+   * whole of the loudness was a string no reporter has ever rendered. Found
+   * while building the BY-01 row (`file-mentions-stay-outside.test.ts`), which
+   * needed the same thing and could not copy this. `console.warn` is printed.
+   */
+  console.warn(
+    [
+      "",
+      "  ⚠ codex tool-disabling check did NOT run.",
+      "      Set BYOLLM_CODEX_LIVE=1 with the CLI signed in to run it.",
+      "      The --disable list in codex-cli.ts is UNVERIFIED in this run.",
+      "",
+    ].join("\n"),
+  );
+}

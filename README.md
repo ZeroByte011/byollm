@@ -221,6 +221,7 @@ The daemon runs prompts on the owner's computer, so **every payload is treated a
 - Model, backend, and flags come from the **owner's local config only** — a job can never name a model, path, URL, or flag.
 - Process-class backends spawn with a stripped environment (no `ANTHROPIC_API_KEY`), an empty scratch dir, no inherited file descriptors, and hard timeout/output caps. HTTP-class backends spawn nothing at all.
 - The daemon exposes **no tools, no retrieval, no MCP** to the model. Output is inert bytes — never eval'd, never written to a payload-named path.
+- With a process-class backend that last point is a claim about **the CLI's** behaviour, not only ours, so it is re-proved on every run against the real signed-in binary rather than assumed. It is not yet an OS-level sandbox. [`docs/security.md`](docs/security.md) §3.2–§3.3 say what has been proved, on which platforms, and what has not.
 
 A named **adversarial test corpus** (command injection, argv injection, path traversal, env exfiltration, oversized/unicode payloads) runs as a blocking CI gate, and every backend must ship its own hostile-payload suite before it can be added. See [`docs/security.md`](docs/security.md).
 
