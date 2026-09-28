@@ -19,10 +19,10 @@ an SLA, but you will be told what is happening rather than that it is "being
 reviewed".
 
 **If you looked in good faith, we will not come after you for having looked.**
-That includes probing the consent and allowlist boundaries — which is exactly
-where we would like the scrutiny — as long as you use your own accounts and
-machines, do not degrade the service for other people, and do not access, keep
-or publish anybody else's data. Tell us before you tell anyone else, and give
+That includes probing the pairing, pinning and grant boundaries — which is
+exactly where we would like the scrutiny — as long as you use your own accounts
+and machines, do not degrade the service for other people, and do not access,
+keep or publish anybody else's data. Tell us before you tell anyone else, and give
 us a chance to ship a fix.
 
 ## What is in scope, and what is already known
