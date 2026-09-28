@@ -54,6 +54,30 @@ describe("config defaults", () => {
   });
 });
 
+describe("updateAuthority — B360", () => {
+  it("is absent unless the owner wrote it, so a parse never bakes it in", () => {
+    /* `byollm offer` writes the parsed config back. A default here would put
+       the key in every owner's file, and the older daemon a rollback
+       installs refuses a key its strict schema has never seen. */
+    expect("updateAuthority" in parse()).toBe(false);
+  });
+
+  it("takes an origin", () => {
+    expect(
+      parse({ updateAuthority: "https://hub.example" }).updateAuthority,
+    ).toBe("https://hub.example");
+  });
+
+  it("refuses something that is not an origin, at load", () => {
+    for (const bad of ["", "ftp://hub.example", "https://"]) {
+      expect(
+        DaemonConfig.safeParse({ ...base, updateAuthority: bad }).success,
+        bad,
+      ).toBe(false);
+    }
+  });
+});
+
 describe("resolveConfig — the subscription self-lock [SUBSCRIPTION_SELF_LOCK]", () => {
   it("ignores a widened offer on a subscription backend and says so", () => {
     const { routes, problems } = resolveConfig(

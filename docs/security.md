@@ -532,6 +532,61 @@ Test id: `RESULT_PROVENANCE`.
 
 ---
 
+## 7a. Updates
+
+An auto-updating daemon hands whoever controls its updates the machine it runs
+on, so this is the whole of what the updater will and will not do. It is off
+unless the owner turns it on (`autoUpdate` in `~/.byollm/config.json`).
+
+**Who may offer.** One origin: the update authority, `updateAuthority` in the
+config, which is the reference hub (`https://hub.byollm.cloud`) when unset.
+Every other paired site's offer is ignored, and the daemon says so once per
+site. The authority's own offer counts only over a pairing that pinned a
+control-plane key: a direct-mode pairing is one site, and never updates the
+daemon every other site is also talking to.
+
+**What is refused**, before anything is drained or installed:
+
+- anything that is not a literal version — `latest`, `^0.1.0`, `0.1.x`;
+- a version at or below the one running — **the updater never downgrades**,
+  so an offer cannot walk a machine back onto a release with a known hole;
+- a pair of versions it cannot order, and a machine whose own version it
+  cannot name (it would have nothing to roll back to);
+- a version it has already tried in this process.
+
+**What is verified.** The install runs with `--ignore-scripts` and against
+`registry.npmjs.org` only. Then, before anything runs the new binary, the
+daemon reads the package's SLSA provenance from the registry and requires that
+it was built by `oftomorrowinc/byollm`'s workflow from the tag `v<version>`,
+that it names `byollm@<version>`, and that its subject digest is the tarball's
+`dist.integrity` — the hash npm checked the download against. Anything
+unreadable — no provenance, a 404, no network — fails the check. Then the new
+binary is started and must report the version that was asked for.
+
+What this does not verify, stated plainly: the daemon does not re-check the
+Sigstore signature on the provenance bundle. npm checks it at publish and
+refuses a publish whose bundle does not verify; the daemon trusts the
+registry for that. So a stolen publish token is refused (it cannot produce
+provenance from our workflow), and a lying registry is not something this
+check defends against. `@byollm/protocol` is pinned to an exact version by
+the verified package and is not checked separately. Updates are not staged:
+every machine offered a version takes it on its next heartbeat.
+
+**What a rollback looks like.** If the provenance check fails, or the new
+binary does not answer with the version asked for, the daemon reinstalls the
+version it came from — once — restarts it, and says on the owner's surfaces
+what failed and that it rolled back, e.g. `update: 0.1.2 failed its
+provenance check: there is no SLSA provenance for it; rolled back to 0.1.1`.
+It goes back to serving and does not try that version again. If the rollback
+itself fails, it says so and stops there rather than reinstalling in a loop:
+the machine is left to a person.
+
+Tests: `update.test.ts`, `provenance.test.ts` (against the registry's real
+answer for `byollm@0.1.1`), `update-when-offered.test.ts`, `update-deps.test.ts`
+in `packages/daemon/src`.
+
+---
+
 ## 8. The adversarial corpus
 
 A named corpus of hostile payloads runs as a **blocking CI gate**. Each row

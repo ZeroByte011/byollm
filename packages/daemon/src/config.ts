@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { dirname } from "node:path";
 import { DEFAULT_FLOOR_BYTES } from "./memory-gate.js";
+import { normalizeOrigin } from "./origins.js";
 import { checkBaseUrl } from "./ssrf.js";
 
 /**
@@ -285,11 +286,46 @@ export const DaemonConfig = z
      * The trade this switch represents is written down rather than
      * discovered: an auto-updating daemon means whoever controls the npm
      * publish controls the fleet. The controls on that are 2FA at publish,
-     * exact-version installs (never a tag), the canary and rollback in
-     * `update.ts`, and staged cohorts. It is the Chrome trade, taken
-     * deliberately.
+     * exact-version installs (never a tag), forward-only versions, offers
+     * from {@link updateAuthority} alone, SLSA provenance checked before the
+     * new binary runs, and the canary and rollback in `update.ts`. Staged
+     * cohorts are NOT among them yet: nothing in this file or on the wire
+     * spreads an offer over time, so every machine the authority offers a
+     * version to takes it on its next heartbeat. It is the Chrome trade,
+     * taken deliberately.
      */
     autoUpdate: z.boolean().default(false),
+    /**
+     * The one origin whose update offers this daemon takes — B360.
+     *
+     * Unset means the reference hub (`DEFAULT_ORIGIN` in `cli.ts`), and it is
+     * resolved there rather than defaulted here on purpose: `byollm offer`
+     * writes the PARSED config back, so a schema default would be baked into
+     * every owner's file — and an older daemon, which is exactly what a
+     * rollback installs, refuses a key its strict schema has never seen.
+     *
+     * Every other paired origin's offer is ignored and said once. The
+     * authority's own offers count only over a pairing that pinned a control
+     * plane; a direct-mode pairing never updates the daemon.
+     */
+    updateAuthority: z
+      .string()
+      .refine(
+        (value) => {
+          try {
+            normalizeOrigin(value);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        {
+          message:
+            "an origin byollm can reach, the way `byollm connect` takes " +
+            "one (https://hub.byollm.cloud)",
+        },
+      )
+      .optional(),
     /**
      * The memory floor this device refuses model work below — B090.
      *

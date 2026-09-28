@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { withoutComments } from "@byollm/protocol";
 import { describe, expect, it } from "vitest";
 import { watchForUpdate } from "./cli.js";
 import { DAEMON_VERSION } from "./index.js";
@@ -34,6 +36,15 @@ function above(steps: number): string {
 }
 
 const NEWER_OFFER = above(1);
+
+/**
+ * The provenance check, passed. Every case here is about the wiring, and the
+ * real check would ask npm about a version that does not exist — which is a
+ * refusal, and would turn every case into the rollback case. The check has
+ * its own file (`provenance.test.ts`); the case below that fails it is the
+ * one about what the watcher does with the answer.
+ */
+const VERIFIED = () => Promise.resolve({ verified: true } as const);
 import type { Runner } from "./runner.js";
 
 /**
@@ -81,6 +92,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: surface.io,
       signal: new AbortController().signal,
+      verify: VERIFIED,
       offered: () => NEWER_OFFER,
       wait: () => Promise.resolve(),
       drainMs: 5,
@@ -102,11 +114,63 @@ describe("taking an offered update", () => {
       "npm",
       "install",
       "--global",
+      "--ignore-scripts",
+      "--registry=https://registry.npmjs.org",
       `byollm@${NEWER_OFFER}`,
     ]);
     /* Drained before installed. The order is the safety, and asserting the
        calls happened says nothing about it. */
     expect(r.calls.indexOf("drain:5")).toBe(0);
+  });
+
+  it("never starts a package that fails its provenance check", async () => {
+    /* B360. `byollm start` is what first runs the new binary, so a failed
+       check must reach `start` only after `from` is back — and the machine
+       goes back to work on the version it had. */
+    const r = fakeRunner();
+    const surface = io();
+    const controller = new AbortController();
+    const ran: string[][] = [];
+    const installed: string[] = [];
+    const watching = watchForUpdate({
+      runners: [r.runner],
+      io: surface.io,
+      signal: controller.signal,
+      offered: () => NEWER_OFFER,
+      verify: () =>
+        Promise.resolve({
+          verified: false,
+          why: "there is no SLSA provenance for it",
+        }),
+      wait: () => {
+        if (r.calls.includes("resume")) controller.abort();
+        return Promise.resolve();
+      },
+      drainMs: 5,
+      run: (command) => {
+        ran.push([...command]);
+        if (command[1] === "install")
+          installed.push(command.at(-1)?.replace("byollm@", "") ?? "");
+        return Promise.resolve(
+          command[1] === "--version"
+            ? {
+                code: 0,
+                output: `byollm ${installed.at(-1) ?? DAEMON_VERSION} (protocol 1)\n`,
+              }
+            : { code: 0, output: "" },
+        );
+      },
+    });
+
+    expect(await watching).toBe(false);
+    expect(installed).toEqual([NEWER_OFFER, DAEMON_VERSION]);
+    const firstStart = ran.findIndex((c) => c[1] === "start");
+    const rollback = ran.findIndex(
+      (c) => c.at(-1) === `byollm@${DAEMON_VERSION}`,
+    );
+    expect(firstStart).toBeGreaterThan(rollback);
+    expect(r.calls).toContain("resume");
+    expect(surface.said.join("")).toContain("provenance check");
   });
 
   it("goes back to work when the update did not take", async () => {
@@ -123,6 +187,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: surface.io,
       signal: controller.signal,
+      verify: VERIFIED,
       offered: () => NEWER_OFFER,
       wait: () => {
         if (r.calls.includes("resume")) controller.abort();
@@ -177,6 +242,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: surface.io,
       signal: new AbortController().signal,
+      verify: VERIFIED,
       offered: () => offering,
       wait: () => {
         /* The second offer arrives the way a real one does: on a later
@@ -195,7 +261,7 @@ describe("taking an offered update", () => {
         if (command[1] === "install") {
           /* The first version installs as something else — a broken build —
              and the second installs cleanly. */
-          const asked = command[3]?.replace("byollm@", "") ?? "";
+          const asked = command.at(-1)?.replace("byollm@", "") ?? "";
           installed.push(asked === NEWER ? DAEMON_VERSION : asked);
         }
         return Promise.resolve({ code: 0, output: "" });
@@ -224,6 +290,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: surface.io,
       signal: controller.signal,
+      verify: VERIFIED,
       offered: () => NEWER_OFFER,
       wait: () => {
         cycles += 1;
@@ -232,7 +299,7 @@ describe("taking an offered update", () => {
       },
       drainMs: 5,
       run: (command) => {
-        if (command[1] === "install") attempts.push(command[3] ?? "");
+        if (command[1] === "install") attempts.push(command.at(-1) ?? "");
         return Promise.resolve(
           command[1] === "--version"
             ? { code: 0, output: `byollm ${DAEMON_VERSION} (protocol 1)\n` }
@@ -262,6 +329,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: surface.io,
       signal: controller.signal,
+      verify: VERIFIED,
       offered: () => "latest",
       wait: () => {
         if (surface.said.length > 0) controller.abort();
@@ -286,6 +354,7 @@ describe("taking an offered update", () => {
       runners: [r.runner],
       io: io().io,
       signal: controller.signal,
+      verify: VERIFIED,
       offered: () => undefined,
       wait: () => Promise.resolve(),
       run: (command) => {
@@ -297,5 +366,20 @@ describe("taking an offered update", () => {
     expect(await watching).toBe(false);
     expect(ran).toEqual([]);
     expect(r.calls).toEqual([]);
+  });
+});
+
+describe("where the daemon hears an offer — B360", () => {
+  it("routes every heartbeat offer through the authority check", () => {
+    /* `offerInbox` is tested in `update.test.ts`; this is the one line that
+       makes it exist. Before B360 the handler wrote the version straight into
+       the watcher's input, whichever site sent it — and putting that line
+       back would leave every inbox test green. */
+    const source = withoutComments(
+      readFileSync(new URL("./cli.ts", import.meta.url), "utf8"),
+    );
+    expect(source).toContain("inbox?.receive(origin, event.version)");
+    expect(source).toContain("offered: inbox.current");
+    expect(source).not.toMatch(/=\s*event\.version\b/);
   });
 });

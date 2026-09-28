@@ -4,8 +4,9 @@ import { access } from "node:fs/promises";
 import { emphasise, terminalContext } from "./emphasis.js";
 import { backendVerifier, setModel, showModel } from "./model.js";
 import { preflight } from "./preflight.js";
-import { update } from "./update.js";
+import { offerInbox, update } from "./update.js";
 import { realUpdateDeps } from "./update-deps.js";
+import type { Provenance } from "./provenance.js";
 import { runLogin, type LoginCommand } from "./login.js";
 import { createBackend } from "./backends/index.js";
 import type { Backend } from "./backends/types.js";
@@ -2009,8 +2010,24 @@ async function runLoop(
    */
   if (signal?.aborted === true) controller.abort();
   const runners: Runner[] = [];
-  /** The newest version any paired site has named — B053. */
-  let offered: string | undefined;
+  /**
+   * The newest version the update authority has named — B053, B360.
+   *
+   * Only built when the owner turned updates on: an offer to a machine that
+   * will not take one is not worth a line in its log.
+   */
+  const inbox = loaded.config.autoUpdate
+    ? offerInbox({
+        authority: normalizeOrigin(
+          loaded.config.updateAuthority ?? DEFAULT_ORIGIN,
+        ),
+        hasControlPlane: (origin) =>
+          pairings.get(origin)?.controlPlanePublic !== undefined,
+        report: (line) => {
+          io.err(`update: ${line}\n`);
+        },
+      })
+    : undefined;
 
   for (const origin of origins) {
     const pairing = pairings.get(origin);
@@ -2111,20 +2128,10 @@ async function runLoop(
       },
       onEvent: (event) => {
         report(origin, event, io);
-        /**
-         * B053. The newest offer wins, whichever site named it.
-         *
-         * `??=` here at first, which held the FIRST offer forever — so a
-         * machine that rolled back once never updated again until somebody
-         * restarted it, because the version it had already failed on was
-         * still the only one this ever saw. CW's note, and it was a daemon
-         * bug rather than a hub one.
-         *
-         * Last writer wins is safe because the runner only fires this when
-         * the version changes, and the watcher below refuses to retry a
-         * version it has already tried.
-         */
-        if (event.type === "update-offered") offered = event.version;
+        /* B360: which site said it decides whether it counts — see
+           `offerInbox`. It used to be whichever site spoke last. */
+        if (event.type === "update-offered")
+          inbox?.receive(origin, event.version);
         // The set follows consent, and the file follows the set — cloud_009
         // §5. Not awaited, for the reason the revocation branch below gives:
         // an event handler that throws takes the runner with it, and a file
@@ -2270,12 +2277,12 @@ async function runLoop(
    * when an update has been taken, so on every other path this is the same
    * `await` it always was.
    */
-  const updated = loaded.config.autoUpdate
+  const updated = inbox
     ? watchForUpdate({
         runners,
         io,
         signal: controller.signal,
-        offered: () => offered,
+        offered: inbox.current,
       })
     : new Promise<boolean>(() => undefined);
 
@@ -2316,6 +2323,8 @@ export async function watchForUpdate(input: {
   readonly wait?: (ms: number) => Promise<void>;
   readonly run?: CommandRunner;
   readonly drainMs?: number;
+  /** The provenance check, stubbed in tests; the registry's otherwise. */
+  readonly verify?: (version: string) => Promise<Provenance>;
 }): Promise<boolean> {
   const wait =
     input.wait ?? ((ms: number) => new Promise<void>((w) => setTimeout(w, ms)));
@@ -2336,6 +2345,7 @@ export async function watchForUpdate(input: {
       const outcome = await update(DAEMON_VERSION, version, {
         ...realUpdateDeps({
           run: input.run ?? spawnCommand,
+          ...(input.verify === undefined ? {} : { verify: input.verify }),
           drain: async () => {
             await Promise.all(
               input.runners.map((runner) =>

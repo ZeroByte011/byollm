@@ -93,6 +93,14 @@ for one. It defaults to 2 GB. **It does not know how big your models are**, so
 set it to fit your largest. It does not apply to services whose compute happens
 somewhere else — a hosted model reached through a local port loads nothing here.
 
+`autoUpdate` (default `false`) lets the daemon install new versions when it is
+offered one. Offers are taken only from `updateAuthority` — the reference hub,
+`https://hub.byollm.cloud`, when you leave it out — and never from any other
+site you paired with, never from a direct-mode pairing, and never for an older
+version. Every update is checked against its npm provenance before it runs and
+rolled back if it fails; [`docs/security.md` §7a](https://github.com/oftomorrowinc/byollm/blob/main/docs/security.md#7a-updates)
+says exactly what is checked.
+
 You do not have to write any of this by hand. `byollm services manage` asks
 what this machine has and writes the file for you, and it is safe to re-run:
 it shows what is already there.

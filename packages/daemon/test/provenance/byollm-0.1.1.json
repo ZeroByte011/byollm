@@ -1,0 +1,24 @@
+{
+  "_note": "Trimmed from https://registry.npmjs.org/-/npm/v1/attestations/byollm@0.1.1 on 2026-09-28: signatures and verification material removed, payloads verbatim. dist.integrity from https://registry.npmjs.org/byollm/0.1.1.",
+  "integrity": "sha512-WLM0SOrVzCgt54gJgnBrBiaGzSHoDtUNxfVWqFda5+2RwShAp2tb410ziDxYcaZriycyp9JImuCqHbbvCJzdPw==",
+  "attestations": [
+    {
+      "predicateType": "https://github.com/npm/attestation/tree/main/specs/publish/v0.1",
+      "bundle": {
+        "dsseEnvelope": {
+          "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjAuMSIsInN1YmplY3QiOlt7Im5hbWUiOiJwa2c6bnBtL2J5b2xsbUAwLjEuMSIsImRpZ2VzdCI6eyJzaGE1MTIiOiI1OGIzMzQ0OGVhZDVjYzI4MmRlNzg4MDk4MjcwNmIwNjI2ODZjZDIxZTgwZWQ1MGRjNWY1NTZhODU3NWFlN2VkOTFjMTI4NDBhNzZiNWJlMzVkMzM4ODNjNTg3MWE2NmI4YjI3MzJhN2QyNDg5YWUwYWExZGI2ZWYwODljZGQzZiJ9fV0sInByZWRpY2F0ZVR5cGUiOiJodHRwczovL2dpdGh1Yi5jb20vbnBtL2F0dGVzdGF0aW9uL3RyZWUvbWFpbi9zcGVjcy9wdWJsaXNoL3YwLjEiLCJwcmVkaWNhdGUiOnsibmFtZSI6ImJ5b2xsbSIsInZlcnNpb24iOiIwLjEuMSIsInJlZ2lzdHJ5IjoiaHR0cHM6Ly9yZWdpc3RyeS5ucG1qcy5vcmcifX0=",
+          "payloadType": "application/vnd.in-toto+json"
+        }
+      }
+    },
+    {
+      "predicateType": "https://slsa.dev/provenance/v1",
+      "bundle": {
+        "dsseEnvelope": {
+          "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJzdWJqZWN0IjpbeyJuYW1lIjoicGtnOm5wbS9ieW9sbG1AMC4xLjEiLCJkaWdlc3QiOnsic2hhNTEyIjoiNThiMzM0NDhlYWQ1Y2MyODJkZTc4ODA5ODI3MDZiMDYyNjg2Y2QyMWU4MGVkNTBkYzVmNTU2YTg1NzVhZTdlZDkxYzEyODQwYTc2YjViZTM1ZDMzODgzYzU4NzFhNjZiOGIyNzMyYTdkMjQ4OWFlMGFhMWRiNmVmMDg5Y2RkM2YifX1dLCJwcmVkaWNhdGVUeXBlIjoiaHR0cHM6Ly9zbHNhLmRldi9wcm92ZW5hbmNlL3YxIiwicHJlZGljYXRlIjp7ImJ1aWxkRGVmaW5pdGlvbiI6eyJidWlsZFR5cGUiOiJodHRwczovL3Nsc2EtZnJhbWV3b3JrLmdpdGh1Yi5pby9naXRodWItYWN0aW9ucy1idWlsZHR5cGVzL3dvcmtmbG93L3YxIiwiZXh0ZXJuYWxQYXJhbWV0ZXJzIjp7IndvcmtmbG93Ijp7InJlZiI6InJlZnMvdGFncy92MC4xLjEiLCJyZXBvc2l0b3J5IjoiaHR0cHM6Ly9naXRodWIuY29tL29mdG9tb3Jyb3dpbmMvYnlvbGxtIiwicGF0aCI6Ii5naXRodWIvd29ya2Zsb3dzL3JlbGVhc2UueW1sIn19LCJpbnRlcm5hbFBhcmFtZXRlcnMiOnsiZ2l0aHViIjp7ImV2ZW50X25hbWUiOiJwdXNoIiwicmVwb3NpdG9yeV9pZCI6IjEzMjgxMzkyMzkiLCJyZXBvc2l0b3J5X293bmVyX2lkIjoiOTE1NTY0NDQifX0sInJlc29sdmVkRGVwZW5kZW5jaWVzIjpbeyJ1cmkiOiJnaXQraHR0cHM6Ly9naXRodWIuY29tL29mdG9tb3Jyb3dpbmMvYnlvbGxtQHJlZnMvdGFncy92MC4xLjEiLCJkaWdlc3QiOnsiZ2l0Q29tbWl0IjoiY2YzODg0OTllZDU0YWUyOWFlMWE0ZDE3YWYxNDQ1YmJhNGJkYWQ5ZSJ9fV19LCJydW5EZXRhaWxzIjp7ImJ1aWxkZXIiOnsiaWQiOiJodHRwczovL2dpdGh1Yi5jb20vYWN0aW9ucy9ydW5uZXIvZ2l0aHViLWhvc3RlZCJ9LCJtZXRhZGF0YSI6eyJpbnZvY2F0aW9uSWQiOiJodHRwczovL2dpdGh1Yi5jb20vb2Z0b21vcnJvd2luYy9ieW9sbG0vYWN0aW9ucy9ydW5zLzM1Nzc5MzY3MzU0L2F0dGVtcHRzLzEifX19fQ==",
+          "payloadType": "application/vnd.in-toto+json"
+        }
+      }
+    }
+  ]
+}

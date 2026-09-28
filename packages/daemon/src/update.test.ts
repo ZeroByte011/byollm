@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exactVersion, update, type UpdateDeps } from "./update.js";
+import { exactVersion, offerInbox, update, type UpdateDeps } from "./update.js";
 
 /**
  * B053. The ruling's own emphasis: an updater must be able to un-update.
@@ -21,6 +21,10 @@ function deps(over: Partial<UpdateDeps> & { installs?: string[] } = {}) {
       order.push(`install:${version}`);
       installs.push(version);
       return Promise.resolve(true);
+    },
+    verify: (version) => {
+      order.push(`verify:${version}`);
+      return Promise.resolve({ verified: true });
     },
     reregister: () => {
       order.push("reregister");
@@ -91,6 +95,174 @@ describe("updating", () => {
     const outcome = await update("unknown", "0.1.0-alpha.82", d.deps);
     expect(outcome.kind).toBe("refused");
     expect(d.order).toEqual([]);
+  });
+});
+
+describe("which direction the updater moves — B360", () => {
+  it("refuses a downgrade, before draining anything", async () => {
+    /* An offer is a claim about what is newer. A downgrade is how a machine
+       is walked back onto a release with a known hole in it. */
+    const d = deps();
+    const outcome = await update("0.1.1", "0.1.0", d.deps);
+    expect(outcome.kind).toBe("refused");
+    expect(d.order).toEqual([]);
+    expect(d.said.join("")).toContain("never downgrades");
+  });
+
+  it("orders prereleases numerically, and a release above its prereleases", async () => {
+    /* `alpha.9` sorts after `alpha.83` as a string — the mistake that would
+       let the one through as an "upgrade". */
+    for (const [from, to] of [
+      ["0.1.0-alpha.83", "0.1.0-alpha.9"],
+      ["0.1.0", "0.1.0-alpha.120"],
+    ] as const) {
+      const d = deps();
+      expect((await update(from, to, d.deps)).kind, `${from} → ${to}`).toBe(
+        "refused",
+      );
+      expect(d.order).toEqual([]);
+    }
+  });
+
+  it("refuses the version it is already on, and a build-only difference", async () => {
+    for (const to of ["0.1.1", "0.1.1+rebuilt"]) {
+      const d = deps();
+      expect((await update("0.1.1", to, d.deps)).kind, to).toBe("refused");
+      expect(d.order).toEqual([]);
+    }
+  });
+
+  it("refuses when either side cannot be ordered", async () => {
+    /* Unreadable is not permission. The target is caught as not exact and
+       the source as nothing to roll back to — neither reaches a drain. */
+    for (const [from, to] of [
+      ["0.1.1", "0.2"],
+      ["0.1", "0.2.0"],
+    ] as const) {
+      const d = deps();
+      expect((await update(from, to, d.deps)).kind, `${from} → ${to}`).toBe(
+        "refused",
+      );
+      expect(d.order).toEqual([]);
+    }
+  });
+
+  it("still takes a higher version, including a prerelease of the next one", async () => {
+    for (const to of ["0.1.2", "0.2.0-rc.1", "1.0.0"]) {
+      const d = deps();
+      expect(await update("0.1.1", to, d.deps), to).toEqual({
+        kind: "updated",
+        to,
+      });
+    }
+  });
+});
+
+describe("checking provenance before the new binary runs — B360", () => {
+  it("verifies after the install and before anything starts the new binary", async () => {
+    const d = deps();
+    await update("0.1.1", "0.1.2", d.deps);
+    expect(d.order).toEqual([
+      "drain",
+      "install:0.1.2",
+      "verify:0.1.2",
+      "reregister",
+    ]);
+  });
+
+  it("rolls back without ever re-registering the package that failed", async () => {
+    /* `reregister` is what first executes the new binary, so the only
+       re-register allowed is the one after `from` is back. */
+    const d = deps({
+      verify: (version) => {
+        d.order.push(`verify:${version}`);
+        return Promise.resolve({
+          verified: false,
+          why: "there is no SLSA provenance for it",
+        });
+      },
+    });
+    const outcome = await update("0.1.1", "0.1.2", d.deps);
+    expect(outcome).toEqual({
+      kind: "rolled-back",
+      to: "0.1.1",
+      why: "0.1.2 failed its provenance check: there is no SLSA provenance for it",
+    });
+    expect(d.order).toEqual([
+      "drain",
+      "install:0.1.2",
+      "verify:0.1.2",
+      "install:0.1.1",
+      "reregister",
+    ]);
+    expect(d.said.join("")).toContain("rolled back to 0.1.1");
+  });
+
+  it("is stranded, and says so, when the rollback after a failed check fails", async () => {
+    const d = deps({
+      install: (version) => Promise.resolve(version === "0.1.2"),
+      verify: () => Promise.resolve({ verified: false, why: "HTTP 404" }),
+    });
+    const outcome = await update("0.1.1", "0.1.2", d.deps);
+    expect(outcome.kind).toBe("stranded");
+    expect(d.said.join("")).toContain("provenance check: HTTP 404");
+    expect(d.said.join("")).toContain("also failed");
+  });
+});
+
+describe("whose offers count — B360", () => {
+  const HUB = "https://hub.byollm.cloud";
+  function inbox(pinned: readonly string[] = [HUB]) {
+    const said: string[] = [];
+    const box = offerInbox({
+      authority: HUB,
+      hasControlPlane: (origin) => pinned.includes(origin),
+      report: (line) => said.push(line),
+    });
+    return { box, said };
+  }
+
+  it("takes the authority's offer", () => {
+    const { box, said } = inbox();
+    box.receive(HUB, "0.1.2");
+    expect(box.current()).toBe("0.1.2");
+    expect(said).toEqual([]);
+  });
+
+  it("ignores any other paired origin, and says so once", () => {
+    /* Before this, the newest offer won whichever site named it — so any
+       site somebody paired with could choose what their machine installs. */
+    const { box, said } = inbox(["https://app.example", HUB]);
+    for (let beat = 0; beat < 5; beat += 1) {
+      box.receive("https://app.example", "9.9.9");
+    }
+    expect(box.current()).toBeUndefined();
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain("https://app.example");
+    expect(said[0]).toContain(`only from ${HUB}`);
+  });
+
+  it("does not let another origin replace the authority's offer", () => {
+    const { box } = inbox(["https://app.example", HUB]);
+    box.receive(HUB, "0.1.2");
+    box.receive("https://app.example", "9.9.9");
+    expect(box.current()).toBe("0.1.2");
+  });
+
+  it("ignores the authority over a direct-mode pairing", () => {
+    /* No control plane pinned is the one fact that makes a pairing direct
+       (byollm_016 Amendment L), and a direct pairing is one site. */
+    const { box, said } = inbox([]);
+    box.receive(HUB, "0.1.2");
+    expect(box.current()).toBeUndefined();
+    expect(said.join("")).toContain("direct-mode");
+  });
+
+  it("follows the authority's newest offer", () => {
+    const { box } = inbox();
+    box.receive(HUB, "0.1.2");
+    box.receive(HUB, "0.1.3");
+    expect(box.current()).toBe("0.1.3");
   });
 });
 
