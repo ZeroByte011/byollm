@@ -818,8 +818,19 @@ describe("what setup tells a supervisor — B207", () => {
           p,
           io,
           machineWith(["claude-cli"]),
-          undefined,
-          undefined,
+          /* `noServers` and `answersFine`, not `undefined` — B358.
+             These two positions were left to their defaults, and the defaults
+             are a probe that reaches localhost and **a verifier that runs the
+             backend's canary: a genuine model call through the genuine binary**.
+             So this case, whose subject is a `SIGHUP`, was spending a real turn
+             on the owner's subscription and betting a 5s budget on how fast the
+             vendor answered. It lost two runs in three on a signed-in Mac, and
+             passed everywhere `claude` is not installed — which is CI, which is
+             why nothing caught it. The comment beside `answersFine` predicted
+             exactly this ("a test that stubbed only `detector` hung for five
+             seconds"); these two cases were the ones that had not read it. */
+          noServers,
+          answersFine,
           undefined,
           undefined,
           env,
@@ -854,8 +865,11 @@ describe("what setup tells a supervisor — B207", () => {
         p,
         io,
         machineWith(["claude-cli"]),
-        undefined,
-        undefined,
+        /* Stubbed for the reason the case above is — B358. This one is the
+           control for a signal that must NOT be sent, and it was making a real
+           model call to decide that. */
+        noServers,
+        answersFine,
         undefined,
         undefined,
         env,
