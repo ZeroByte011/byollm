@@ -19,7 +19,8 @@ These are constantly conflated, and conflating them is how a product ends up
 promising something it cannot deliver.
 
 **Breakout** — payload text escaping the model call into the computer. This is
-made _structurally impossible_, not detected. §3 is how.
+designed out, not detected — and re-proved against the real binary on every
+run. §3 is how.
 
 **Prompt injection** — payload text manipulating what the model _says_. No
 daemon can prevent this, and BYOLLM does not claim to. What it does is bound
