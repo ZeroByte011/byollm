@@ -301,6 +301,13 @@ jobs:
         env:
           REQUIRE_SUPABASE: "1"
         run: pnpm run freeze-gate
+      # BY-05: B258 was fixed in MemoryStore and its SQL twin kept requeueing
+      # adopted leases, because these cases only ever ran against memory.
+      # Same stack, same REQUIRE_SUPABASE guard as the step above.
+      - name: Cloud-lane store cases against Postgres
+        env:
+          REQUIRE_SUPABASE: "1"
+        run: pnpm exec vitest run --project unit packages/server/src/the-cloud-lane-keeps-a-long-job.test.ts
       - name: Stop Supabase
         if: always()
         working-directory: packages/server

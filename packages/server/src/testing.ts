@@ -15,6 +15,7 @@ import {
 import { generateSiteKeys } from "./keys.js";
 import { type HandlerResult, ByollmHandlers } from "./handlers.js";
 import { MemoryStore } from "./memory.js";
+import type { ByollmStore } from "./store.js";
 
 /**
  * A controllable clock.
@@ -82,14 +83,14 @@ export function subscriptionCapabilities(
   ];
 }
 
-export interface Harness {
+export interface Harness<S extends ByollmStore = MemoryStore> {
   /** A clock the tests can move, described structurally so the class stays internal. */
   readonly clock: {
     now(): number;
     advance(ms: number): void;
     set(ms: number): void;
   };
-  readonly store: MemoryStore;
+  readonly store: S;
   readonly app: ByollmApp;
   readonly handlers: ByollmHandlers;
   /** Pair a daemon end to end and return its ids and signing keys. */
@@ -132,6 +133,13 @@ export interface Harness {
   }): Promise<Record<string, unknown>>;
 }
 
+interface HarnessOptions {
+  leaseMs?: number;
+  defaultTtlMs?: number;
+  /** Shrink the no-runner grace so a test need not wait ten real seconds. */
+  noRunnerGraceMs?: number;
+}
+
 /** A paired daemon, with what it needs to sign. */
 export interface PairedRunner {
   readonly token: string;
@@ -144,20 +152,32 @@ export interface PairedRunner {
  * A server wired to the reference store with a fake clock — the fixture both
  * the unit tests and the conformance kit build on.
  */
-export function createHarness(
-  options: {
-    leaseMs?: number;
-    defaultTtlMs?: number;
-    /** Shrink the no-runner grace so a test need not wait ten real seconds. */
-    noRunnerGraceMs?: number;
+export function createHarness<S extends ByollmStore = MemoryStore>(
+  options: HarnessOptions & {
+    /**
+     * Another adapter in place of the reference store — how a case written
+     * against MemoryStore also runs on Postgres. `defaultTtlMs` is then the
+     * adapter's own business and is ignored here.
+     */
+    store?: S;
+    /**
+     * Where the fake clock starts. A store with a clock of its own — Postgres
+     * `now()` — needs the two to begin together, or every timestamp this
+     * harness writes lands in a different era from the ones the database does.
+     */
+    startAt?: number;
   } = {},
-): Harness {
-  const clock = new FakeClock();
-  const store = new MemoryStore(
-    options.defaultTtlMs === undefined
-      ? {}
-      : { defaultTtlMs: options.defaultTtlMs },
-  );
+): Harness<S> {
+  const clock = new FakeClock(options.startAt);
+  // The cast is the default type argument's promise: no `store` means `S` is
+  // MemoryStore, which is what gets built.
+  const store =
+    options.store ??
+    (new MemoryStore(
+      options.defaultTtlMs === undefined
+        ? {}
+        : { defaultTtlMs: options.defaultTtlMs },
+    ) as unknown as S);
   const siteKeys = generateSiteKeys();
   const app = new ByollmApp({
     store,
