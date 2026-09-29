@@ -66,6 +66,10 @@ const ALLOWED: Readonly<Record<string, string>> = {
     "same file, same reason — and this check is one of its callers: B209 " +
     "moved the recursive walk here so the separator assumption lives in one " +
     "place instead of three",
+  "daemon/src/test-support.ts: unreachableBackend":
+    "same file, same reason — a listener that answers every connection by " +
+    'closing it, so "the backend is not running" costs milliseconds on ' +
+    "every OS instead of a firewall-dependent timeout",
   "daemon/src/backends/claude-cli.ts: resetClaudeLaunchCache":
     "a reset hook for a module-level cache — only a test needs to un-warm it, " +
     "and the alternative is exporting the cache itself",

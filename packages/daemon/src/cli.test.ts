@@ -6,7 +6,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { generateKeys, publicIdentityOf, keyId } from "@byollm/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 /**
  * B111's Windows timeout used to live here as a `vi.setConfig` call. It is
@@ -24,7 +32,12 @@ import {
 import { IngressLog } from "./ingress.js";
 import { daemonPaths, type DaemonPaths } from "./paths.js";
 import { Pairings } from "./pairings.js";
-import { noSupervisor, removeTemp } from "./test-support.js";
+import {
+  noSupervisor,
+  removeTemp,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 import { servicePlan } from "./service.js";
 
 const SITE = publicIdentityOf(generateKeys(1_800_000_000_000));
@@ -44,6 +57,13 @@ let out: string;
 let err: string;
 let confirmAnswer: boolean;
 let confirmQuestions: string[];
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 function io(): Partial<CliIo> {
   return {
@@ -86,7 +106,7 @@ async function writeConfig(): Promise<void> {
           model: "m",
           kinds: ["llm.generate"],
           type: "openai-http",
-          baseUrl: "http://127.0.0.1:1/v1",
+          baseUrl: backend.baseUrl,
         },
       },
     }),
@@ -435,14 +455,14 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
             offer: "private",
           },
           shared: {
             model: "llama3.2",
             kinds: ["llm.chat"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -489,7 +509,7 @@ describe("byollm services", () => {
             model: "llama3.2",
             kinds: ["llm.chat"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -545,13 +565,13 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
           },
           llama: {
             model: "llama3.2",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
           },
         },
       }),
@@ -600,7 +620,7 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -631,13 +651,13 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
           },
           llama: {
             model: "llama3.2",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
           },
         },
         defaults: { "llm.generate": "qwen" },
@@ -822,6 +842,10 @@ describe("byollm services speaks for the shell, not the daemon", () => {
    * different user, a different HOME, a credential a login shell can see and a
    * background agent cannot. So the command stops claiming to know.
    */
+  // Written so the probe has somewhere to go. With no config.json the CLI
+  // probes DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+  beforeEach(writeConfig);
+
   it("does not promise what the daemon will advertise", async () => {
     await run("services");
     expect(out).toContain("from this shell");
@@ -954,6 +978,9 @@ describe("connect when this device is already paired", () => {
   let answer: (res: ServerResponse) => void;
 
   beforeEach(async () => {
+    // The pairing is the subject; the backend is not. With no config.json the
+    // CLI would probe DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+    await writeConfig();
     heartbeats = 0;
     beats = [];
     answer = (res) => {
@@ -1410,6 +1437,9 @@ describe("what connect writes, status reads", () => {
   let origin: string;
 
   beforeEach(async () => {
+    // The pairing is the subject; the backend is not. With no config.json the
+    // CLI would probe DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+    await writeConfig();
     hub = createServer((req, res) => {
       let raw = "";
       req.on("data", (chunk: Buffer) => {
