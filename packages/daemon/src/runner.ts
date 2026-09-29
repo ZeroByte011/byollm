@@ -3211,11 +3211,14 @@ export class Runner {
         jobId: job.id,
         senderKeyId: keyId(publicIdentityOf(keys).identity),
         recipientKeyId: keyId(this.#pinFor(job).identity),
-        // This runner's clock, not the process's — cloud_008 §31. The only
-        // `Date.now()` left in this class, in the one place that stamps a
-        // deadline somebody else enforces: a test that moves time moved every
-        // other clock here and not this one, so a sealed result carried an
-        // expiry from a different timeline than the lease it answered.
+        // This runner's clock, not the process's — cloud_008 §31. This was a
+        // `Date.now()`, in the one place that stamps a deadline somebody else
+        // enforces: a test that moves time moved every other clock here and
+        // not this one, so a sealed result carried an expiry from a different
+        // timeline than the lease it answered. The retirement window had the
+        // same two clocks until it was found the same way; `drain` is the one
+        // read left on the process clock, because it waits out real time
+        // beside a real sleep.
         deadlineAt: this.#now() + ENVELOPE_MAX_AGE_MS,
         direction: "result",
       },
@@ -3652,7 +3655,7 @@ export class Runner {
       // its work stopped — `sites` not containing the id is the only signal
       // for consent, and the window only holds the pin open, never the route.
       const until = this.#retiring.get(id);
-      if (until !== undefined && Date.now() < until) continue;
+      if (until !== undefined && this.#now() < until) continue;
       this.#retiring.delete(id);
       this.#sites.delete(id);
       // And stop the work already running for it — V1-7.
@@ -3773,7 +3776,7 @@ export class Runner {
     // constant: the upstream may retire a key sooner than the window, never
     // later — ruling 2 makes the overlap a protocol fact rather than the
     // site's to choose, and "forever" is the value a site would pick.
-    const ceiling = Date.now() + RETIREMENT_WINDOW_MS;
+    const ceiling = this.#now() + RETIREMENT_WINDOW_MS;
     const proposed = offered.retiringUntil ?? ceiling;
     this.#retiring.set(walk.from, Math.min(proposed, ceiling));
 

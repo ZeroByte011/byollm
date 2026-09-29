@@ -1197,10 +1197,24 @@ async function commandModel(
     const shown = await showModel(paths.config, service, io);
     return shown.code;
   }
+  /**
+   * The service's own backend, built the way the daemon builds it.
+   *
+   * This passed `createBackend(id, {})` — the id alone — and an HTTP-class
+   * transport throws without its `baseUrl`, so `byollm model <svc> <name>`
+   * failed for every Ollama, LM Studio and vLLM service with "openai-http
+   * backend requires a baseUrl" before the probe could run. The same hole
+   * `backendFor` was written to close for `run`; `setup` already goes through
+   * it. Read once here, for the verifier and the memory guard both.
+   */
+  const loaded = await loadConfig(paths.config).catch(() => undefined);
+  const configured = loaded?.config.services[service];
   const set = await setModel(
     { configPath: paths.config, service, model },
     io,
-    backendVerifier((id) => createBackend(id, {})),
+    backendVerifier((id) =>
+      backendFor({ type: id, baseUrl: configured?.baseUrl }),
+    ),
     /**
      * The memory guard on the owner's own command — B106.
      *
@@ -1212,12 +1226,11 @@ async function commandModel(
      * job — `minAvailableMemoryBytes`, one value, one meaning, whoever asked.
      */
     async (backendId) => {
-      const loaded = await loadConfig(paths.config).catch(() => undefined);
       if (loaded === undefined) return { ask: false };
       const { memory, pressure } = await readHostMemory();
       return modelLoadQuestion({
         backendId,
-        baseUrl: loaded.config.services[service]?.baseUrl,
+        baseUrl: configured?.baseUrl,
         model,
         memory,
         pressure,
@@ -2648,7 +2661,8 @@ async function commandStatus(
   io: CliIo,
   service: ServiceIo,
 ): Promise<ExitCode> {
-  const { loaded, ingress, budgets, spend, spentGrants } = await context(paths);
+  const { loaded, configured, ingress, budgets, spend, spentGrants } =
+    await context(paths);
   const pairings = new Pairings(paths.pairings);
   await pairings.load();
   reportSkipped(pairings, io);
@@ -2764,10 +2778,19 @@ async function commandStatus(
    *
    * `absent` does not demote it: no service registered is the ordinary shape
    * of `byollm run` in a terminal, which is working fine.
+   *
+   * **A machine nobody has set up is not running either.** No config, no
+   * heartbeat: nothing has ever run here, and this line said `running` — the
+   * headline for "working" on a device with nothing to work with, above a
+   * service list showing the built-in default as if somebody had chosen it.
+   * Zero and unknown never look alike (`docs/standards.md`), and "never set
+   * up" is a zero this screen can know. A beat outranks it: `byollm run` on
+   * the defaults is a daemon that is running, whatever the file says.
    */
   const plan = servicePlan(serviceTarget(paths, service));
   const supervision = await serviceState(plan, service.run);
   const revoked = await revokedMark(paths.health);
+  const notSetUp = !configured && beat === undefined;
 
   io.out(
     `state: ${
@@ -2777,9 +2800,17 @@ async function commandStatus(
           ? "NOT RUNNING"
           : failing
             ? "NOT REPORTING"
-            : "running"
+            : notSetUp
+              ? "NOT SET UP"
+              : "running"
     }\n`,
   );
+  if (revoked === undefined && !stale && !failing && notSetUp) {
+    io.out(
+      `  no config at ${paths.config}, and nothing has run here yet.\n` +
+        `  ${NOT_SET_UP_HINT}`,
+    );
+  }
   if (revoked !== undefined) {
     /* The ruled sentence, as the headline's own explanation. Everything below
        it on this screen describes a device that is not going to serve
@@ -2923,8 +2954,12 @@ async function commandStatus(
   // re-run — see the comment beside `authLine` below.
   const recorded = await readServiceStates(paths.serviceStates);
   const deviceName = await labelFor(paths, undefined);
-  const declared = Object.entries(loaded.config.services);
-  if (declared.length === 0) {
+  // Nothing written is not the default: the default is what the daemon falls
+  // back to, and listing it here told a fresh install it had an Ollama.
+  const declared = configured ? Object.entries(loaded.config.services) : [];
+  if (!configured) {
+    io.out("  (none — run `byollm setup`)\n");
+  } else if (declared.length === 0) {
     io.out("  (none configured)\n");
   }
   for (const [name, service] of declared) {
@@ -3946,8 +3981,24 @@ async function commandServices(
    * "run `byollm setup`", which is the one useful thing to say to somebody
    * who has just installed this and typed the obvious command. Losing that
    * sentence in a rename would be the rename costing a first impression.
+   *
+   * And the rename did lose it. With no file, `loadConfig` hands back
+   * `DEFAULT_CONFIG`, so this listed an Ollama at 11434 nobody had configured,
+   * probed it, and sent the reader to `byollm model` — which refused because
+   * there was no config. Said before the probe, because a service that is in
+   * no file is not one this machine offers.
    */
-  const { loaded, ingress, budgets, spend, spentGrants } = await context(paths);
+  const { loaded, configured, ingress, budgets, spend, spentGrants } =
+    await context(paths);
+  if (!configured) {
+    io.out(
+      "services\n" +
+        `  (none — no config at ${paths.config})\n` +
+        "\n" +
+        NOT_SET_UP_HINT,
+    );
+    return 1;
+  }
   const pairings = new Pairings(paths.pairings);
   await pairings.load();
   const hasRelay = pairings
@@ -4147,12 +4198,27 @@ async function commandServices(
 
 async function context(paths: DaemonPaths): Promise<{
   loaded: Awaited<ReturnType<typeof loadConfig>>;
+  /**
+   * Whether the owner has written a config at all.
+   *
+   * `loadConfig` answers a missing file with `DEFAULT_CONFIG`, which is right
+   * for a daemon that has to run on something and wrong for a screen: on a
+   * machine nobody had set up, `services` listed the default's Ollama as if
+   * somebody had chosen it, `model` then refused to touch a file that did not
+   * exist, and `status` read `running`. The two commands that describe this
+   * machine need "nothing written" and "this is what is written" told apart.
+   */
+  configured: boolean;
   ingress: IngressLog;
   budgets: Budgets;
   spend: SpendLedger;
   spentGrants: SpentGrants;
 }> {
   const loaded = await loadConfig(paths.config);
+  const configured = await access(paths.config).then(
+    () => true,
+    () => false,
+  );
   const ingress = new IngressLog({
     path: paths.ingressLog,
     communityPromptDays: loaded.config.ingress.communityPromptDays,
@@ -4166,8 +4232,17 @@ async function context(paths: DaemonPaths): Promise<{
   const spentGrants = new SpentGrants(paths.spentGrants);
   spentGrants.load(Date.now());
   await spend.load(Date.now());
-  return { loaded, ingress, budgets, spend, spentGrants };
+  return { loaded, configured, ingress, budgets, spend, spentGrants };
 }
+
+/**
+ * The one useful thing to say to somebody who has just installed this and
+ * typed the obvious command. `services` and `status` both say it, in the
+ * same words, so a fresh machine cannot describe itself differently
+ * depending on where you look.
+ */
+const NOT_SET_UP_HINT =
+  "Run `byollm setup` to find what this computer already has.\n";
 
 /**
  * Ask, on a real terminal.

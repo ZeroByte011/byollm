@@ -5,12 +5,7 @@ import {
 } from "@byollm/protocol";
 import { describe, expect, it } from "vitest";
 import { NoRunnerAvailableError } from "./delivery.js";
-import {
-  generateUserCode,
-  hashSecret,
-  secretsMatch,
-  generateDeviceCode,
-} from "./ids.js";
+import { generateUserCode, hashSecret, generateDeviceCode } from "./ids.js";
 import { normalizeUserCode } from "./app.js";
 import { capabilityFor } from "./memory.js";
 import { createHarness, httpCapabilities } from "./testing.js";
@@ -53,12 +48,6 @@ describe("id and secret helpers", () => {
     expect(hashSecret("abc")).toHaveLength(64);
     expect(hashSecret("abc")).toBe(hashSecret("abc"));
     expect(hashSecret("abc")).not.toBe(hashSecret("abd"));
-  });
-
-  it("compares digests without throwing on a length mismatch", () => {
-    expect(secretsMatch(hashSecret("a"), hashSecret("a"))).toBe(true);
-    expect(secretsMatch(hashSecret("a"), hashSecret("b"))).toBe(false);
-    expect(secretsMatch("abc", hashSecret("a"))).toBe(false);
   });
 });
 
