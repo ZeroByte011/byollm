@@ -455,7 +455,7 @@ describe("byollm model <service> <name>, on an HTTP service", () => {
     };
     expect(written.services["local"]?.model).toBe("qwen3");
     // And the rest of the entry is as it was — the write is the model only.
-    expect(written.services["local"]?.baseUrl).toBe("http://127.0.0.1:1/v1");
+    expect(written.services["local"]?.baseUrl).toBe(backend.baseUrl);
   });
 });
 
