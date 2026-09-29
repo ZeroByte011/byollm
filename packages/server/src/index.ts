@@ -53,7 +53,6 @@ export {
   generateRunnerId,
   generateUserCode,
   hashSecret,
-  secretsMatch,
 } from "./ids.js";
 
 export {

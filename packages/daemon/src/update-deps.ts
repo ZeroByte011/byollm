@@ -1,4 +1,9 @@
 import type { CommandRunner } from "./install.js";
+import {
+  NPM_REGISTRY,
+  verifyProvenance,
+  type Provenance,
+} from "./provenance.js";
 import type { UpdateDeps } from "./update.js";
 
 /**
@@ -16,12 +21,28 @@ import type { UpdateDeps } from "./update.js";
  * into a command line. `exactVersion` has already refused anything that is
  * not a literal version by the time it reaches here, so this is the second
  * of two fences rather than the only one.
+ *
+ * ## Two flags on the install, both B360
+ *
+ * `--ignore-scripts`, because the provenance check runs AFTER npm has put
+ * the package down, and an install script would run before it. byollm ships
+ * none and neither do its dependencies, so the flag costs nothing today and
+ * means a package that fails the check has executed nothing when it is
+ * rolled back. A future dependency that needs an install script will fail
+ * here, loudly, which is the right time to have that conversation.
+ *
+ * `--registry`, pinned to the one {@link verifyProvenance} reads. A check
+ * against npmjs of a tarball that came from a mirror checks nothing; an
+ * owner whose npm points elsewhere gets a failed install and stays where
+ * they are, rather than a verified-looking update from somewhere unverified.
  */
 export function realUpdateDeps(input: {
   readonly run: CommandRunner;
   readonly drain: () => Promise<void>;
   readonly reregister: () => Promise<boolean>;
   readonly report: (line: string) => void;
+  /** Injected in tests; the registry's provenance for the real thing. */
+  readonly verify?: (version: string) => Promise<Provenance>;
   /** How the installed CLI is asked its version. `byollm`, normally. */
   readonly binary?: string;
 }): UpdateDeps {
@@ -33,6 +54,8 @@ export function realUpdateDeps(input: {
         "npm",
         "install",
         "--global",
+        "--ignore-scripts",
+        `--registry=${NPM_REGISTRY}`,
         `byollm@${version}`,
       ]);
       if (result.code !== 0) {
@@ -50,6 +73,7 @@ export function realUpdateDeps(input: {
       }
       return result.code === 0;
     },
+    verify: input.verify ?? ((version) => verifyProvenance(version)),
     reregister: async () => (await input.run([binary, "start"])).code === 0,
     installedVersion: async () => {
       const result = await input.run([binary, "--version"]);

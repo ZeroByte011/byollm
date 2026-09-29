@@ -1,4 +1,6 @@
+import { once } from "node:events";
 import { readdirSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { sep } from "node:path";
 import {
   RESERVED_PURPOSE,
@@ -121,6 +123,55 @@ export function testControlPlane(now = 1_800_000_000_000): {
  * `relative` is what a check matches on; `path` is what opens the file, and it
  * keeps the platform's own form because that is the one the filesystem wants.
  */
+export interface UnreachableBackend {
+  /** Usable as a service's `baseUrl`. */
+  readonly baseUrl: string;
+  readonly close: () => Promise<void>;
+}
+
+/**
+ * A base URL with nothing behind it, on every machine.
+ *
+ * Tests wrote `http://127.0.0.1:1/v1` (or `:2`, or left an `ollama` service
+ * on its default `:11434`) for "a backend that is definitely not running",
+ * assuming a closed loopback port refuses at once. It does on macOS and on
+ * CI's Linux. On WSL2, and behind some host firewalls, the SYN is dropped
+ * instead: `OpenAiHttpBackend.health` then waits out its own 5 s
+ * `AbortSignal.timeout`, which is exactly the unit test timeout, so the test
+ * can never win the race — 34 tests red on a clean clone, every one a
+ * timeout. Port 1 alone kept passing, and only because it is on the fetch
+ * spec's bad-port list, so undici refuses it before opening a socket.
+ *
+ * So the port is real: an ephemeral loopback listener that closes every
+ * connection the moment it is accepted. `fetch` fails within milliseconds
+ * (`ECONNRESET` / "other side closed"), the probe reports `healthy: false`
+ * with the same "could not reach the model server" detail a refusal gives,
+ * and the daemon takes the same not-healthy branch it takes in CI. No
+ * network policy is consulted, and no well-known port that a real server on
+ * the developer's machine might be sitting on is touched.
+ *
+ * Unref'd so a forgotten `close` cannot hold a worker open; close it in
+ * `afterAll` all the same.
+ */
+export async function unreachableBackend(): Promise<UnreachableBackend> {
+  const server = createServer((socket) => {
+    socket.destroy();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.unref();
+  return {
+    baseUrl: `http://127.0.0.1:${String(port)}/v1`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      }),
+  };
+}
+
 export function treeOf(dir: string): { relative: string; path: string }[] {
   return readdirSync(dir, { recursive: true, encoding: "utf8" }).map(
     (name) => ({

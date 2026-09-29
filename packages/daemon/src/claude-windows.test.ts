@@ -73,6 +73,14 @@ describe("resolveClaudeLaunch", () => {
       "--strict-mcp-config",
       "--mcp-config",
       '{"mcpServers":{}}',
+      // BY-01. Written out here rather than imported, like the environment
+      // allowlist in the adversarial suite: removing it from `FIXED_ARGV` has
+      // to be done twice, deliberately, and this is the copy that runs on
+      // every platform in CI with no `claude` binary anywhere near it. The
+      // live proof that the flag still *contains* anything is
+      // `file-mentions-stay-outside.test.ts`, which needs the real CLI; this
+      // is the half that cannot be skipped.
+      "--restricted",
       "--no-session-persistence",
       "--model",
       "claude-opus-5",

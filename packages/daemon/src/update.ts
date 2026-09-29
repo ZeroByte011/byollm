@@ -20,6 +20,14 @@
  *   each machine gets around to it — different machines, different builds,
  *   one version number in the logs. {@link exactVersion} refuses anything
  *   that is not a literal version, and that refusal is the reason it exists.
+ * - **Forward only** — B360. A version at or below the running one is
+ *   refused, and so is a pair this cannot order. An offer is a claim about
+ *   what is newer, and a downgrade is how a machine is walked back onto a
+ *   release with a known hole in it.
+ * - **Provenance before it runs** — B360. After npm installs and before
+ *   anything starts the new binary, the package's SLSA provenance must say
+ *   our release workflow built these exact bytes (`provenance.ts`). A
+ *   package that fails is rolled back without ever having been executed.
  * - **Canary by identity, not liveness.** The check is "does the installed
  *   binary say it is the version we asked for", not "does it start". A
  *   half-finished install that leaves the old binary in place starts
@@ -35,6 +43,9 @@
  * npm packages forever, and the honest end state is a daemon that says what
  * happened and leaves the machine to a person.
  */
+
+import { compareVersions } from "@byollm/protocol";
+import type { Provenance } from "./provenance.js";
 
 /** A version this updater is willing to install. */
 export type ExactVersion = string & { readonly __exact: unique symbol };
@@ -58,6 +69,13 @@ export interface UpdateDeps {
   readonly drain: () => Promise<void>;
   /** `npm i -g byollm@<version>`. Resolves to whether it succeeded. */
   readonly install: (version: string) => Promise<boolean>;
+  /**
+   * Did our release workflow build what was just installed? — B360.
+   *
+   * Asked after the install and before {@link reregister}, which is the
+   * first thing that would run the new binary.
+   */
+  readonly verify: (version: string) => Promise<Provenance>;
   /** Re-register with the supervisor, since the entry point moved. */
   readonly reregister: () => Promise<boolean>;
   /**
@@ -98,14 +116,26 @@ export async function update(
     deps.report(why);
     return { kind: "refused", why };
   }
-  if (target === from) {
-    return { kind: "refused", why: `already on ${from}` };
-  }
   /* `from` has to be installable too, or the rollback is a promise we cannot
      keep. Better to decline the update than to take a machine somewhere it
      cannot come back from. */
   if (exactVersion(from) === undefined) {
     const why = `refusing to update from "${from}" — no version to roll back to`;
+    deps.report(why);
+    return { kind: "refused", why };
+  }
+  /* Forward only — B360. Both sides are exact by now, so `undefined` should
+     not happen; it is refused anyway, because "cannot tell which is newer"
+     is not permission to install. */
+  const order = compareVersions(target, from);
+  if (order === 0) {
+    return { kind: "refused", why: `already on ${from}` };
+  }
+  if (order === undefined || order < 0) {
+    const why =
+      order === undefined
+        ? `refusing to install ${target} — cannot tell whether it is newer than ${from}`
+        : `refusing to install ${target} — it is older than ${from}, and the updater never downgrades`;
     deps.report(why);
     return { kind: "refused", why };
   }
@@ -123,6 +153,18 @@ export async function update(
     return { kind: "refused", why };
   }
 
+  /* Before `reregister`, because that is what first runs the new binary.
+     A package nobody can vouch for goes back out without having executed —
+     the install itself runs no scripts (`update-deps.ts`). */
+  const proof = await deps.verify(target);
+  if (!proof.verified) {
+    return rollBack(
+      from,
+      `${target} failed its provenance check: ${proof.why}`,
+      deps,
+    );
+  }
+
   await deps.reregister();
 
   const reported = await deps.installedVersion();
@@ -133,11 +175,21 @@ export async function update(
   /* The canary failed: either the binary does not answer, or it answers with
      a version nobody asked for. Both mean the machine is not running what we
      believe it is running, which is the state an updater exists to prevent. */
-  const why =
+  return rollBack(
+    from,
     reported === undefined
       ? `${target} did not answer after installing`
-      : `installed ${target} but the binary reports ${reported}`;
+      : `installed ${target} but the binary reports ${reported}`,
+    deps,
+  );
+}
 
+/** Put `from` back, once, and say how that went. */
+async function rollBack(
+  from: string,
+  why: string,
+  deps: UpdateDeps,
+): Promise<UpdateOutcome> {
   if (!(await deps.install(from))) {
     const stranded = `${why}; rolling back to ${from} also failed`;
     deps.report(stranded);
@@ -158,4 +210,55 @@ export async function update(
 
   deps.report(`${why}; rolled back to ${from}`);
   return { kind: "rolled-back", to: from, why };
+}
+
+/**
+ * Which offers reach the updater at all — B360.
+ *
+ * Every paired origin's heartbeat can carry `updateTo`, and until this the
+ * newest one won whichever site named it: any site somebody paired with could
+ * tell their machine what to install. Now exactly one origin may — the update
+ * authority, `updateAuthority` in the config, the reference hub when unset —
+ * and only over a pairing that pinned a control-plane key. A direct-mode
+ * pairing has none: it is one site, and one site does not get to move the
+ * daemon every other site is also talking to.
+ *
+ * A refused offer is said once per origin, not once per heartbeat: the offer
+ * repeats until something takes it, and a line every ten seconds is a line
+ * nobody reads.
+ */
+export function offerInbox(input: {
+  /** Normalised, as the pairing origins are. */
+  readonly authority: string;
+  /** Whether this origin's pairing pinned a control-plane key. */
+  readonly hasControlPlane: (origin: string) => boolean;
+  readonly report: (line: string) => void;
+}): {
+  readonly receive: (origin: string, version: string) => void;
+  readonly current: () => string | undefined;
+} {
+  let offered: string | undefined;
+  const refused = new Set<string>();
+  return {
+    receive: (origin, version) => {
+      const why =
+        origin !== input.authority
+          ? `updates are taken only from ${input.authority}`
+          : input.hasControlPlane(origin)
+            ? undefined
+            : "it is a direct-mode pairing, and those never update this daemon";
+      if (why === undefined) {
+        /* The newest offer wins, among the authority's own. `??=` here once
+           held the FIRST offer forever, so a machine that rolled back never
+           updated again until restarted (B053); the watcher refuses to retry
+           a version it has already tried, which is what makes this safe. */
+        offered = version;
+        return;
+      }
+      if (refused.has(origin)) return;
+      refused.add(origin);
+      input.report(`ignoring an offer of ${version} from ${origin} — ${why}`);
+    },
+    current: () => offered,
+  };
 }

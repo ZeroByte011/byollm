@@ -12,14 +12,26 @@ import {
   type PublicIdentity,
   type Succession,
 } from "@byollm/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { Budgets } from "./budgets.js";
 import { ProtocolClient } from "./client.js";
 import { DaemonConfig, resolveConfig } from "./config.js";
 import { IngressLog } from "./ingress.js";
 import { Runner, type RunnerEvent } from "./runner.js";
 import { SpendLedger } from "./spend.js";
-import { removeTemp } from "./test-support.js";
+import {
+  removeTemp,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 
 /**
  * A site that rotates its key — byollm_009 Amendment C.
@@ -49,6 +61,13 @@ const id = (keys: typeof K1) => keyId(publicIdentityOf(keys).identity);
 
 let dir: string;
 let events: RunnerEvent[];
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "byollm-rotation-"));
@@ -100,6 +119,7 @@ async function runnerWith(
     sites: Map<string, PublicIdentity>;
     known?: Map<string, PublicIdentity>;
   },
+  now?: () => number,
 ): Promise<Runner> {
   const loaded = resolveConfig(
     DaemonConfig.parse({
@@ -108,7 +128,7 @@ async function runnerWith(
           model: "m",
           kinds: ["llm.generate"],
           type: "openai-http",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: backend.baseUrl,
           offer: "private",
         },
       },
@@ -151,6 +171,7 @@ async function runnerWith(
     }),
     heartbeatMs: 5,
     onEvent: (event) => events.push(event),
+    ...(now === undefined ? {} : { now }),
   });
 }
 
@@ -459,5 +480,63 @@ describe("the window the old key keeps", () => {
     expect(runner.retiring.get(id(K1)) ?? 0).toBeLessThanOrEqual(
       Date.now() + RETIREMENT_WINDOW_MS,
     );
+  });
+});
+
+describe("the window is measured on this device's injected clock", () => {
+  /**
+   * Two of the clock reads on the rotation path went to `Date.now()` rather
+   * than `this.#now()`: the check that keeps the old key while its window is
+   * open, and the ceiling that clamps the window. Harmless in production,
+   * where the two clocks are one clock; wrong for any test that moves time,
+   * which moved every deadline in the class except the one the old key lives
+   * by. The cases above passed because they measured against `Date.now()` too.
+   *
+   * A timeline far from the process clock, so that a read on the wrong one
+   * cannot pass by coincidence in either direction.
+   */
+  const T0 = 1_000_000_000_000;
+
+  it("keeps the old key until the injected clock passes the window, then drops it", async () => {
+    let clock = T0;
+    const runner = await runnerWith(
+      upstream(() => ({
+        sites: { [id(K2)]: publicIdentityOf(K2) },
+        successions: {
+          [id(K2)]: {
+            succeeds: [signSuccession(K1, publicIdentityOf(K2))],
+            retiringUntil: T0 + 60_000,
+          },
+        },
+      })),
+      approvedK1(),
+      () => clock,
+    );
+    await runner.tick();
+    expect(runner.sites.has(id(K1))).toBe(true);
+
+    clock = T0 + 60_001;
+    await runner.tick();
+    expect(runner.sites.has(id(K1))).toBe(false);
+    expect(runner.sites.has(id(K2))).toBe(true);
+  });
+
+  it("clamps the window to the ceiling on the injected clock", async () => {
+    const runner = await runnerWith(
+      upstream(() => ({
+        sites: { [id(K2)]: publicIdentityOf(K2) },
+        successions: {
+          [id(K2)]: {
+            succeeds: [signSuccession(K1, publicIdentityOf(K2))],
+            retiringUntil: T0 + 10 * RETIREMENT_WINDOW_MS,
+          },
+        },
+      })),
+      approvedK1(),
+      () => T0,
+    );
+    await runner.tick();
+
+    expect(runner.retiring.get(id(K1))).toBe(T0 + RETIREMENT_WINDOW_MS);
   });
 });

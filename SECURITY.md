@@ -1,19 +1,28 @@
 # Reporting a security problem
 
-**Email `support@byollm.cloud`, or open a private security advisory at
-[github.com/oftomorrowinc/byollm/security/advisories](https://github.com/oftomorrowinc/byollm/security/advisories/new).
-Please don't open a public issue for a vulnerability.**
+**Report it privately on GitHub: the repository's Security tab → "Report a
+vulnerability", or directly at
+[github.com/oftomorrowinc/byollm/security/advisories/new](https://github.com/oftomorrowinc/byollm/security/advisories/new).**
+That opens a private advisory only you and the maintainers can see. If you
+would rather not use GitHub, email `support@byollm.cloud` — it reaches the
+same people. Either way, never a public issue for anything security-shaped,
+even one you are unsure about: ask privately, and we will say so if it can be
+public.
 
-Either channel reaches a person. This is a small project before its 1.0, so
-the honest expectation is best effort rather than an SLA: you should hear back
-within a few days, and you will be told what we are doing about it rather than
-that it is "being reviewed".
+What you can expect back: an acknowledgement from a person within three
+working days; a private write-up of what we found and what we are doing about
+it, under the advisory's `GHSA-` number — if you wrote by email, we open the
+advisory ourselves and send you that number; and credit in the release note
+that ships the fix, unless you tell us you would rather not be named. This is
+a small project before its 1.0, so the fix itself is best effort rather than
+an SLA, but you will be told what is happening rather than that it is "being
+reviewed".
 
 **If you looked in good faith, we will not come after you for having looked.**
-That includes probing the consent and allowlist boundaries — which is exactly
-where we would like the scrutiny — as long as you use your own accounts and
-machines, do not degrade the service for other people, and do not access, keep
-or publish anybody else's data. Tell us before you tell anyone else, and give
+That includes probing the pairing, pinning and grant boundaries — which is
+exactly where we would like the scrutiny — as long as you use your own accounts
+and machines, do not degrade the service for other people, and do not access,
+keep or publish anybody else's data. Tell us before you tell anyone else, and give
 us a chance to ship a fix.
 
 ## What is in scope, and what is already known

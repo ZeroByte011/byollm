@@ -13,14 +13,26 @@ import {
   type PublicIdentity,
   type StoredKeys,
 } from "@byollm/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { Budgets } from "./budgets.js";
 import { ProtocolClient } from "./client.js";
 import { DaemonConfig, resolveConfig } from "./config.js";
 import { IngressLog } from "./ingress.js";
 import { Runner, type RunnerEvent } from "./runner.js";
 import { SpendLedger } from "./spend.js";
-import { removeTemp } from "./test-support.js";
+import {
+  removeTemp,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 
 /**
  * Who gets to add a site to this device — V1-1.
@@ -53,6 +65,13 @@ const DEVICE = generateKeys(1_800_000_000_001);
 
 let dir: string;
 let events: RunnerEvent[];
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "byollm-approval-"));
@@ -102,7 +121,7 @@ async function runnerWith(
           model: "m",
           kinds: ["llm.generate"],
           type: "openai-http",
-          baseUrl: "http://127.0.0.1:11434/v1",
+          baseUrl: backend.baseUrl,
           offer: "private",
         },
       },

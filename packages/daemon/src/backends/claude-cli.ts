@@ -26,7 +26,48 @@ import type {
  *   delivers it. Verified against the shipped CLI, not assumed.
  * - `--strict-mcp-config` with an empty `--mcp-config` — no MCP servers, and
  *   none inherited from the user's own settings.
+ * - `--restricted` — see below. Without it, `--tools ""` is not enough.
  * - `--no-session-persistence` — a job leaves no session behind.
+ *
+ * **`--restricted`, and why `--tools ""` alone was not containment (BY-01).**
+ *
+ * The CLI expands `@`-file mentions in the prompt *before* the model turn, in
+ * its own input preprocessor. That is not the tool system, so `--tools ""`
+ * does not touch it: the file's bytes are already in the context window by the
+ * time a tool would have been offered. The empty scratch `cwd` defeats only
+ * *relative* mentions, and `HOME` is in {@link ENV_ALLOWLIST} by design — so
+ * `@/absolute/path` and `@~/path` both resolved, and any site the owner paired
+ * with could make the owner's device read any file the owner can read and
+ * return it in the answer. Reported privately as BY-01; reproduced here on
+ * macOS against `claude` 2.1.277 with this exact argv, environment and cwd.
+ *
+ * `--restricted` **confines the file surface — the preprocessor included — to
+ * the working directories**, and our working directory is the empty scratch
+ * dir `runProcessJob` makes per job. So the containment is structural rather
+ * than a refusal: there is nothing in scope to name. Measured, not read off
+ * the help page — with it, seven mention shapes (`@/abs`, `@~/`,
+ * `@$HOME/abs`, each bare, with a read verb, and with none) returned no canary
+ * while the same argv without it returned the canary every time; and
+ * `@inside.txt`, a file we placed in the scratch cwd, **still expands**, which
+ * is the positive control proving the confinement is to the directory rather
+ * than a blanket refusal the model happened to perform.
+ *
+ * It also ignores the user's, the project's and the local settings files,
+ * which is the other half of the report: a hook or an `--append-system-prompt`
+ * out of somebody's own `~/.claude` no longer reaches a job. Managed (policy)
+ * settings still apply — `docs/security.md` §3.3 says so.
+ *
+ * Two flags that look like they should do this and do not, tested rather than
+ * assumed: `--setting-sources ""` (David's first candidate) leaked every time,
+ * as did `--safe-mode`, `--disable-slash-commands` and
+ * `--permission-prompts none`. `--bare` is documented to skip keychain reads
+ * and take Anthropic auth *only* from `ANTHROPIC_API_KEY` — which byollm_002
+ * forbids this backend from holding — and it exits 1 with "Not logged in", so
+ * it is not available to us at any price.
+ *
+ * `file-mentions-stay-outside.test.ts` is what keeps this from becoming a
+ * memory: it runs the real binary against a real canary, and its control is
+ * this argv with `--restricted` removed.
  */
 const FIXED_ARGV = Object.freeze([
   "--print",
@@ -37,6 +78,7 @@ const FIXED_ARGV = Object.freeze([
   "--strict-mcp-config",
   "--mcp-config",
   '{"mcpServers":{}}',
+  "--restricted",
   "--no-session-persistence",
 ]);
 

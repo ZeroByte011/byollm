@@ -223,6 +223,11 @@ describe("claude-cli — the argv and environment contract", () => {
     expect(argv).toContain("--print");
     expect(argv[argv.indexOf("--model") + 1]).toBe("claude-opus-5");
     expect(argv[argv.indexOf("--tools") + 1]).toBe("");
+    // BY-01: `--tools ""` above turns the tool system off and does nothing at
+    // all about the CLI's `@`-mention preprocessor, which runs before the model
+    // turn. `--restricted` is what confines that to the working directories,
+    // and the working directory is an empty scratch dir.
+    expect(argv).toContain("--restricted");
   });
 
   it("keeps only allowlisted variables, and never the API key", () => {

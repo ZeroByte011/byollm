@@ -19,12 +19,20 @@ These are constantly conflated, and conflating them is how a product ends up
 promising something it cannot deliver.
 
 **Breakout** — payload text escaping the model call into the computer. This is
-made _structurally impossible_, not detected. §3 is how.
+designed out, not detected — and re-proved against the real binary on every
+run. §3 is how.
 
 **Prompt injection** — payload text manipulating what the model _says_. No
 daemon can prevent this, and BYOLLM does not claim to. What it does is bound
 the consequences: the model has no tools, no retrieval and no MCP, and its
 output is inert bytes that travel back over the protocol and into a log.
+
+**"No retrieval" is a claim about somebody else's CLI, and it was false once.**
+An agentic CLI can read a file named in the prompt *before the model turn*, in
+an input preprocessor that no tool switch touches — which is retrieval, and it
+turns prompt injection back into file access. That is what happened, it is
+closed, and §3.2 states the flag that closes it and the live check that keeps
+asking. Read the sentence above as resting on that check, not on a design.
 
 > **The guarantee, in one sentence:** your computer runs one model call and
 > nothing else; what the model _says_ is between you and the app that sent it.
@@ -118,6 +126,27 @@ Spawns a binary. Every requirement below is mandatory here.
 - **No tools.** `--tools ""` is the CLI's own switch for disabling every
   built-in tool, plus `--strict-mcp-config` with an empty `--mcp-config` so no
   MCP server is available and none is inherited from the user's own settings.
+- **No file surface outside the scratch directory** — and this is a *separate*
+  guarantee from the one above, because the switch that delivers it is a
+  different switch. The `claude` CLI expands `@`-file mentions in the prompt
+  **before the model turn**, in its own input preprocessor rather than through a
+  tool, so `--tools ""` never touched it: an `@/absolute/path` or `@~/path` in a
+  job payload put the file's bytes into the context window and the answer
+  brought them back. `--restricted` confines that surface — the preprocessor
+  included — to the working directories, and the working directory is the empty
+  scratch dir below. So the containment is that **there is nothing in scope to
+  name**, not that anything refused. `--restricted` also ignores the user's,
+  the project's and the local settings files, so a hook or a system-prompt
+  append out of somebody's own `~/.claude` no longer reaches a job.
+  `--setting-sources ""`, `--safe-mode`, `--disable-slash-commands` and
+  `--permission-prompts none` were each tried against a canary and each leaked;
+  this is the one that did not.
+- **`codex` reaches files through a tool, and `-s read-only` is not the fence.**
+  Read-only means read anything and write nothing, so what stands between a
+  payload and any file the owner can read is the `--disable` list in
+  `codex-cli.ts` — with it removed the model runs `cat` on an absolute path and
+  returns the contents. Nothing needed changing there; the list was already
+  doing it. What changed is that it is now proved the same way.
 - **Stripped environment.** An allowlist of `PATH`, `HOME`, `LANG`, `LC_ALL`,
   `TZ`, `TMPDIR`, plus `CI=1` — and on Windows only, eight more (§3.3).
   Everything else is dropped, so a prompt that says "read your environment"
@@ -135,15 +164,48 @@ Spawns a binary. Every requirement below is mandatory here.
 
 Test ids: `NO_SHELL_INTERPOLATION`, `STRIPPED_CHILD_ENV`.
 
+**How the file claim is proved, and what proof it is not.** The corpus in §8
+has carried `@/etc/passwd` since it was written and this suite passed it every
+time — because those rows run against a probe binary that reports its argv and
+exits. A probe has no input preprocessor, so "the payload reached the model
+verbatim" was the only question it could answer, and the hole was in a question
+it could not be asked. The proof is therefore a separate row,
+`file-mentions-stay-outside.test.ts`, which runs the **real** binaries:
+
+- The guarded side calls the shipped backend, so the argv, the environment
+  allowlist and the per-job scratch `cwd` are the ones a job gets.
+- The **control decides whether anything was proved.** A model that will not
+  read a file answers exactly like one that cannot, and the same argv that
+  leaked three times in a row refused once — so the row first runs the same
+  prompt with `--restricted` removed (for codex, with the `--disable` list
+  removed) and reports **inconclusive**, not a pass, unless that leaks.
+- A positive control asserts the mechanism is the one written above: a mention
+  of a file *inside* the working directory still expands. If that stops being
+  true the containment is stronger than documented and the paragraph above is
+  wrong, so the row goes red on purpose and the wording gets revisited.
+- A hermetic half runs under a temporary `HOME`, needs no credentials and no
+  network, and asserts only what a credential-free run can carry: that this
+  binary still *recognises* `--restricted`. Option parsing happens before
+  authentication, so a renamed flag surfaces as `unknown option` — which is the
+  likeliest way this fix dies. It proves nothing about containment and says so.
+
 ### 3.3 What we cannot drop, and say so
 
 **`HOME` is present in the child environment.** The `claude` CLI reads its
 subscription credentials from the user's own config directory, so removing
 `HOME` would remove the authentication this backend exists to use. The honest
 consequence: the child process can reach the filesystem its user can reach.
-What prevents it doing anything with that is **having no tools**, not the
-environment. If that trade is not acceptable to you, do not configure a
-process-class backend — the HTTP-class one spawns nothing at all.
+What prevents it doing anything with that is **having no tools and no file
+surface outside the scratch directory** (§3.2), not the environment. If that
+trade is not acceptable to you, do not configure a process-class backend — the
+HTTP-class one spawns nothing at all.
+
+This paragraph used to end at "having no tools", and that was the whole of the
+mistake. `HOME` in the environment is what made `@~/path` resolve, and the
+sentence naming it as an accepted cost was three lines above the sentence
+claiming the cost was covered. The cost was real; the cover was not. It is
+covered now by an argv flag and a live check, and `HOME` stays for the same
+reason as before.
 
 **Windows needs eight more variables, for the same reason.** `HOME` does not
 name the user's profile there, so the allowlist also carries `USERPROFILE`,
@@ -201,10 +263,48 @@ model**. But the information is visible, we cannot close it, and if that is
 not acceptable to you, do not configure a process-class backend on a
 domain-joined computer — the HTTP-class one spawns nothing at all.
 
+**The file confinement is one flag in somebody else's CLI, and it is checked
+rather than trusted.** `--restricted` is the whole of it. If a future release
+renames it, drops it, or keeps the name and narrows the meaning, the hole
+reopens and nothing about our code changes. Three things follow, and all three
+are costs rather than reassurances:
+
+- A renamed or removed flag is caught hermetically — option parsing precedes
+  authentication, so the credential-free half of
+  `file-mentions-stay-outside.test.ts` sees `unknown option`. A flag that keeps
+  its name and stops confining is caught only by the live half, which needs the
+  binary present and signed in.
+- **`--restricted` ignores the user's, the project's and the local settings
+  files. Managed (policy) settings still apply.** On a computer where an
+  administrator has installed a managed settings file, that file's hooks and
+  system-prompt additions still reach a job. We cannot switch that off and do
+  not try to; it is the administrator's computer.
+- **The claim is proved where the row has run.** Verified on macOS against
+  `claude` 2.1.277 and `codex` 0.149.1, with byollm's exact argv, environment
+  and scratch `cwd`. CI does not install either CLI, so **CI proves that the
+  flags are in the argv, not that they still contain anything** — the live row
+  needs somebody's signed-in machine, which is why it is default-on there
+  rather than opt-in, and why it prints a line naming itself when it skips.
+  Unverified on Windows and on Linux until the row runs there. Those version
+  numbers are a date, not a guarantee — re-check rather than trust them:
+  `pnpm vitest run --project adversarial file-mentions-stay-outside` on a
+  signed-in machine, which reports inconclusive rather than passing if it
+  cannot reach a model.
+
 **No OS-level sandbox yet.** There is no seatbelt profile, no seccomp filter,
 no namespace. The isolation described above is process-level. Adding an
 OS-level layer where the platform allows is worth doing and is not done; this
 document will say so until it is.
+
+BY-01 is the argument for it. The bug was not a mistake in our code — the argv
+was frozen, the environment was an allowlist, the `cwd` was an empty scratch
+dir, and every one of those held. It was a capability in the child we had not
+enumerated, and the fix is a request to the child not to use it. A seatbelt
+profile or a namespace would make the same guarantee without asking: a process
+that cannot `open()` outside its directory does not need to be persuaded. Until
+that exists, everything in §3.2 about files is **a contract with a CLI, not a
+property of the process** — and the difference is exactly one release of
+somebody else's software.
 
 
 ### 3.4 The device key file, and what protects it
@@ -438,6 +538,61 @@ Test id: `RESULT_PROVENANCE`.
 
 ---
 
+## 7a. Updates
+
+An auto-updating daemon hands whoever controls its updates the machine it runs
+on, so this is the whole of what the updater will and will not do. It is off
+unless the owner turns it on (`autoUpdate` in `~/.byollm/config.json`).
+
+**Who may offer.** One origin: the update authority, `updateAuthority` in the
+config, which is the reference hub (`https://hub.byollm.cloud`) when unset.
+Every other paired site's offer is ignored, and the daemon says so once per
+site. The authority's own offer counts only over a pairing that pinned a
+control-plane key: a direct-mode pairing is one site, and never updates the
+daemon every other site is also talking to.
+
+**What is refused**, before anything is drained or installed:
+
+- anything that is not a literal version — `latest`, `^0.1.0`, `0.1.x`;
+- a version at or below the one running — **the updater never downgrades**,
+  so an offer cannot walk a machine back onto a release with a known hole;
+- a pair of versions it cannot order, and a machine whose own version it
+  cannot name (it would have nothing to roll back to);
+- a version it has already tried in this process.
+
+**What is verified.** The install runs with `--ignore-scripts` and against
+`registry.npmjs.org` only. Then, before anything runs the new binary, the
+daemon reads the package's SLSA provenance from the registry and requires that
+it was built by `oftomorrowinc/byollm`'s workflow from the tag `v<version>`,
+that it names `byollm@<version>`, and that its subject digest is the tarball's
+`dist.integrity` — the hash npm checked the download against. Anything
+unreadable — no provenance, a 404, no network — fails the check. Then the new
+binary is started and must report the version that was asked for.
+
+What this does not verify, stated plainly: the daemon does not re-check the
+Sigstore signature on the provenance bundle. npm checks it at publish and
+refuses a publish whose bundle does not verify; the daemon trusts the
+registry for that. So a stolen publish token is refused (it cannot produce
+provenance from our workflow), and a lying registry is not something this
+check defends against. `@byollm/protocol` is pinned to an exact version by
+the verified package and is not checked separately. Updates are not staged:
+every machine offered a version takes it on its next heartbeat.
+
+**What a rollback looks like.** If the provenance check fails, or the new
+binary does not answer with the version asked for, the daemon reinstalls the
+version it came from — once — restarts it, and says on the owner's surfaces
+what failed and that it rolled back, e.g. `update: 0.1.2 failed its
+provenance check: there is no SLSA provenance for it; rolled back to 0.1.1`.
+It goes back to serving and does not try that version again. If the rollback
+itself fails, it says so and stops there rather than reinstalling in a loop:
+the machine is left to a person.
+
+Tests: `update.test.ts`, `provenance.test.ts` (against the registry's real
+answer for `byollm@0.1.1`), `update-when-offered.test.ts`, `update-deps.test.ts`
+in `packages/daemon/src`.
+
+---
+
 ## 8. The adversarial corpus
 
 A named corpus of hostile payloads runs as a **blocking CI gate**. Each row
@@ -446,8 +601,18 @@ asserts "reached the model verbatim, changed nothing else."
 Process-class families: shell metacharacters and command substitution; argv
 injection (`--dangerously-skip-permissions`, `--mcp-config`, `--allowedTools
 Bash`, `-p` lookalikes, `--` smuggling); path traversal and `file://`/`@file`
-tricks; environment exfiltration; unicode (RTL override, zero-width,
-homoglyph) and control characters; oversized payloads.
+tricks; `@`-mention expansion of absolute and `~` paths; environment
+exfiltration; unicode (RTL override, zero-width, homoglyph) and control
+characters; oversized payloads.
+
+**What this gate cannot see, stated because it took a private report to find
+it.** These rows run against a probe binary that reports its argv, environment,
+`cwd` and stdin. That makes the assertion exact — the payload arrived verbatim
+and changed nothing else — and it makes the gate blind to anything the *real*
+binary does with a payload that arrived verbatim. The probe has no input
+preprocessor, so `@/etc/passwd` sat in this corpus passing for months while the
+shipped CLI was expanding it. A payload family belongs here; a claim about what
+a CLI does with it belongs in a row that runs the CLI (§3.2).
 
 HTTP-class families: absolute URLs and metadata hostnames in the payload; path
 traversal; CRLF header injection; JSON breakout; control characters; oversized

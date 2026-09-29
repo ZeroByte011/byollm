@@ -6,7 +6,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { generateKeys, publicIdentityOf, keyId } from "@byollm/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 /**
  * B111's Windows timeout used to live here as a `vi.setConfig` call. It is
@@ -24,7 +32,12 @@ import {
 import { IngressLog } from "./ingress.js";
 import { daemonPaths, type DaemonPaths } from "./paths.js";
 import { Pairings } from "./pairings.js";
-import { noSupervisor, removeTemp } from "./test-support.js";
+import {
+  noSupervisor,
+  removeTemp,
+  unreachableBackend,
+  type UnreachableBackend,
+} from "./test-support.js";
 import { servicePlan } from "./service.js";
 
 const SITE = publicIdentityOf(generateKeys(1_800_000_000_000));
@@ -44,6 +57,13 @@ let out: string;
 let err: string;
 let confirmAnswer: boolean;
 let confirmQuestions: string[];
+/** Where every health probe in this file goes — see `unreachableBackend`. */
+let backend: UnreachableBackend;
+
+beforeAll(async () => {
+  backend = await unreachableBackend();
+});
+afterAll(() => backend.close());
 
 function io(): Partial<CliIo> {
   return {
@@ -86,7 +106,7 @@ async function writeConfig(): Promise<void> {
           model: "m",
           kinds: ["llm.generate"],
           type: "openai-http",
-          baseUrl: "http://127.0.0.1:1/v1",
+          baseUrl: backend.baseUrl,
         },
       },
     }),
@@ -141,6 +161,7 @@ describe("byollm pause / resume — removed", () => {
        to reach this line — which is where it did its damage, outranking
        every other state on the one screen people check. */
     await mkdir(paths.root, { recursive: true });
+    await writeConfig();
     await writeFile(join(paths.root, "paused"), "2026-09-01T00:00:00.000Z\n");
     await run("status");
     expect(out).not.toContain("PAUSED");
@@ -411,6 +432,33 @@ describe("byollm log", () => {
   });
 });
 
+describe("byollm model <service> <name>, on an HTTP service", () => {
+  /**
+   * The verifier was built from the backend id alone — `createBackend(id, {})`
+   * — and an HTTP-class transport throws without its `baseUrl`. So the setter
+   * failed for every Ollama, LM Studio and vLLM service with "openai-http
+   * backend requires a baseUrl", before the probe could run and after the
+   * screen had said "Checking …". The daemon builds the same backend through
+   * `backendFor`, from the service's own config; this command now does too.
+   *
+   * Nothing is probed here: the HTTP transport has no canary, so the verifier
+   * answers "not asked" and the model is written, which is the documented
+   * shape for a local server. The test is that the command gets that far.
+   */
+  it("builds the backend from the service's config, and saves the model", async () => {
+    await writeConfig();
+    expect(await run("model", "local", "qwen3")).toBe(0);
+    expect(err).not.toContain("requires a baseUrl");
+    expect(out).toContain("local is now on qwen3");
+    const written = JSON.parse(await readFile(paths.config, "utf8")) as {
+      services: Record<string, { model: string; baseUrl: string }>;
+    };
+    expect(written.services["local"]?.model).toBe("qwen3");
+    // And the rest of the entry is as it was — the write is the model only.
+    expect(written.services["local"]?.baseUrl).toBe("http://127.0.0.1:1/v1");
+  });
+});
+
 describe("byollm services", () => {
   it("reports an unreachable backend as not advertised, and exits 1", async () => {
     await writeConfig();
@@ -435,14 +483,14 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
             offer: "private",
           },
           shared: {
             model: "llama3.2",
             kinds: ["llm.chat"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -489,7 +537,7 @@ describe("byollm services", () => {
             model: "llama3.2",
             kinds: ["llm.chat"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -545,13 +593,13 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
           },
           llama: {
             model: "llama3.2",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
           },
         },
       }),
@@ -600,7 +648,7 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
             offer: "team",
           },
         },
@@ -631,13 +679,13 @@ describe("byollm services", () => {
             model: "qwen3",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:1/v1",
+            baseUrl: backend.baseUrl,
           },
           llama: {
             model: "llama3.2",
             kinds: ["llm.generate"],
             type: "openai-http",
-            baseUrl: "http://127.0.0.1:2/v1",
+            baseUrl: backend.baseUrl,
           },
         },
         defaults: { "llm.generate": "qwen" },
@@ -822,7 +870,12 @@ describe("byollm services speaks for the shell, not the daemon", () => {
    * different user, a different HOME, a credential a login shell can see and a
    * background agent cannot. So the command stops claiming to know.
    */
+  // Written so the probe has somewhere to go. With no config.json the CLI
+  // probes DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+  beforeEach(writeConfig);
+
   it("does not promise what the daemon will advertise", async () => {
+    await writeConfig();
     await run("services");
     expect(out).toContain("from this shell");
     expect(out).not.toContain("will be advertised");
@@ -842,6 +895,7 @@ describe("byollm services speaks for the shell, not the daemon", () => {
     });
     await mkdir(dirname(plan.unitPath), { recursive: true });
     await writeFile(plan.unitPath, "", "utf8");
+    await writeConfig();
 
     await runCli(["services"], { paths, io: io(), service });
     expect(out).toContain("your shell's view");
@@ -852,6 +906,7 @@ describe("byollm services speaks for the shell, not the daemon", () => {
     // The control. A warning on every invocation is a warning nobody reads,
     // and somebody running the daemon in a terminal has no divergence to warn
     // about — their shell *is* the daemon's environment.
+    await writeConfig();
     await run("services");
     expect(out).not.toContain("your shell's view");
   });
@@ -901,6 +956,7 @@ describe("a device that is running and invisible", () => {
   it("says nothing about a handful of failures", async () => {
     // One refusal is noise, and a warning on every blip is a warning nobody
     // reads. The threshold is the whole difference between a state and a log.
+    await writeConfig();
     await health({ at: Date.now(), consecutiveFailures: 2 });
     await run("status");
     expect(out).toMatch(/^state: running$/m);
@@ -911,6 +967,10 @@ describe("a device that is running and invisible", () => {
     // No file is not "healthy" — it is "this daemon has not said", which is
     // also the state of one that predates the file. Both read as running,
     // which is the honest collapse: nothing here claims otherwise.
+    //
+    // On a machine somebody HAS set up: a config is what separates "the
+    // daemon has not said" from "nothing has ever been here to say it".
+    await writeConfig();
     await run("status");
     expect(out).toMatch(/^state: running$/m);
   });
@@ -923,6 +983,43 @@ describe("a device that is running and invisible", () => {
     await health({ at: Date.now(), consecutiveFailures: 99 });
     await run("status");
     expect(out).toContain("NOT REPORTING");
+  });
+});
+
+describe("a machine nobody has set up", () => {
+  /**
+   * The first two commands a fresh install types, and they sent each other
+   * round in a circle. `loadConfig` answers a missing file with the built-in
+   * default — right for a daemon, which has to run on something — and both
+   * screens printed that default as if somebody had chosen it: `services`
+   * listed an Ollama at 11434, probed it, and pointed at `byollm model`,
+   * which refused because there was no config; `status` said `running` about
+   * a device on which nothing had ever run.
+   */
+  it("services says there is nothing, and what to run, rather than listing the default", async () => {
+    expect(await run("services")).toBe(1);
+    expect(out).toContain("no config at");
+    expect(out).toContain("byollm setup");
+    // The default is the daemon's fallback, not a service this machine has.
+    expect(out).not.toContain("ollama");
+    expect(out).not.toContain("11434");
+    expect(out).not.toContain("byollm model");
+  });
+
+  it("status does not claim to be running", async () => {
+    expect(await run("status")).toBe(0);
+    expect(out).toMatch(/^state: NOT SET UP$/m);
+    expect(out).not.toMatch(/^state: running$/m);
+    expect(out).toContain("byollm setup");
+    expect(out).not.toContain("llama3.2");
+  });
+
+  it("status reads running once a config exists, as before", async () => {
+    // The control: the headline is about the file's absence, not its contents.
+    await writeConfig();
+    expect(await run("status")).toBe(0);
+    expect(out).toMatch(/^state: running$/m);
+    expect(out).not.toContain("NOT SET UP");
   });
 });
 
@@ -954,6 +1051,9 @@ describe("connect when this device is already paired", () => {
   let answer: (res: ServerResponse) => void;
 
   beforeEach(async () => {
+    // The pairing is the subject; the backend is not. With no config.json the
+    // CLI would probe DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+    await writeConfig();
     heartbeats = 0;
     beats = [];
     answer = (res) => {
@@ -1410,6 +1510,9 @@ describe("what connect writes, status reads", () => {
   let origin: string;
 
   beforeEach(async () => {
+    // The pairing is the subject; the backend is not. With no config.json the
+    // CLI would probe DEFAULT_CONFIG's Ollama on :11434 — see `unreachableBackend`.
+    await writeConfig();
     hub = createServer((req, res) => {
       let raw = "";
       req.on("data", (chunk: Buffer) => {

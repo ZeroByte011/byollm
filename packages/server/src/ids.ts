@@ -1,9 +1,4 @@
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 /**
  * Alphabet for the user-facing pairing code.
@@ -62,15 +57,6 @@ export function generateUserCode(): string {
 /** SHA-256, hex. Tokens and device codes are stored only as this. */
 export function hashSecret(secret: string): string {
   return createHash("sha256").update(secret, "utf8").digest("hex");
-}
-
-/**
- * Compare two hex digests without leaking their difference through timing.
- * Lengths are compared first because `timingSafeEqual` throws on a mismatch.
- */
-export function secretsMatch(aHex: string, bHex: string): boolean {
-  if (aHex.length !== bHex.length) return false;
-  return timingSafeEqual(Buffer.from(aHex, "hex"), Buffer.from(bHex, "hex"));
 }
 
 /**

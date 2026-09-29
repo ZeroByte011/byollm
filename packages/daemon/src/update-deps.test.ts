@@ -42,6 +42,8 @@ describe("installing a version", () => {
       "npm",
       "install",
       "--global",
+      "--ignore-scripts",
+      "--registry=https://registry.npmjs.org",
       "byollm@0.1.0-alpha.83",
     ]);
   });

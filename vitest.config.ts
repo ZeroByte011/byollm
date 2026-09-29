@@ -100,6 +100,34 @@ export default defineConfig({
           include: ["packages/daemon/test/adversarial/**/*.test.ts"],
           environment: "node",
           testTimeout: 30_000,
+          /**
+           * After the others, never beside them — and this is about CPU, not
+           * ordering.
+           *
+           * BY-01's row (`file-mentions-stay-outside.test.ts`) is default-on
+           * wherever a CLI is installed and signed in, and it spawns several
+           * **real** `claude` and `codex` processes — each a full agentic
+           * runtime. Run in parallel with the `unit` project, that starved two
+           * unrelated tests in two of four full runs on this Mac, in two
+           * different ways: `setup.test.ts` timed out at 5006ms on a body that
+           * drives scripted IO and spawns nothing, and
+           * `where-the-time-went.test.ts`'s "keeps the FIRST byte" saw a child's
+           * 120ms write land past its 400ms bound.
+           *
+           * The second failure is why the fix is here rather than in a timeout.
+           * `unitTimeout` above would have caught the first and done nothing at
+           * all for the second: that case measures wall-clock time to first
+           * byte, so there is no limit to raise — the number it exists to report
+           * was simply wrong. And widening its tolerance would mean degrading a
+           * measurement test to make room for an unrelated one, which is how a
+           * suite stops measuring things one accommodation at a time.
+           *
+           * So the heavy project gets the machine to itself. `groupOrder` runs
+           * groups lowest-first, and every other project is left at the default
+           * 0 — the cost is roughly thirty seconds of wall clock on a full run,
+           * paid to keep every existing timeout and tolerance honest.
+           */
+          sequence: { groupOrder: 1 },
         },
       },
       {
