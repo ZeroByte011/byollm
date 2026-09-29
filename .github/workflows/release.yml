@@ -25,17 +25,13 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Read-only by default. A job that needs more says so at job level, and a
+# job-level `permissions` replaces this block rather than adding to it, so
+# what a job lists is all it gets. `ci` and `platforms` run the whole test
+# suite, including whatever a dependency's test hooks do, and inherited the
+# publish scopes for no reason; now only `release` holds them.
 permissions:
-  # Write, only so the release note can become a GitHub release — B084. A
-  # release with no note ships as the tag's subject line truncated, which is
-  # how an approved paragraph sat unpublished for a week. The alternative was
-  # a token, and widening the workflow's own scope is the smaller change.
-  contents: write
-  # Reading CI's verdict on this commit — the `ci` job below.
-  actions: read
-  # The whole point: this is what lets the runner mint an OIDC token npm will
-  # trust. Without it every publish fails with ENEEDAUTH.
-  id-token: write
+  contents: read
 
 jobs:
   # Nothing publishes on a commit CI has not passed — cloud_008 §3.7.
@@ -54,8 +50,12 @@ jobs:
   ci:
     name: CI passed on this commit
     runs-on: ubuntu-latest
+    permissions:
+      # Reading CI's verdict on this commit — `gh run list` below.
+      actions: read
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Wait for CI
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,9 +111,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           cache: pnpm
@@ -127,10 +127,28 @@ jobs:
     name: Publish to npm
     needs: [ci, platforms]
     runs-on: ubuntu-latest
+    permissions:
+      # Write, only so the release note can become a GitHub release — B084. A
+      # release with no note ships as the tag's subject line truncated, which
+      # is how an approved paragraph sat unpublished for a week. The
+      # alternative was a token, and widening this job's own scope is the
+      # smaller change.
+      contents: write
+      # The whole point: this is what lets the runner mint an OIDC token npm
+      # will trust. Without it every publish fails with ENEEDAUTH.
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # Commit SHAs, not the moving `v4` tags; the trailing comment names the
+      # release each SHA was resolved from. This job can mint an OIDC token
+      # npm trusts for these packages, and any action running in it can read
+      # the request token that does so. A version tag can be repointed after
+      # the fact (tj-actions/changed-files, March 2025); a commit cannot. Bump
+      # by moving the SHA and the comment together. `pnpm/action-setup@v4`
+      # resolved to v4.3.0 when this was pinned: v4.4.0 exists and the tag
+      # had not been moved to it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # Same latest-LTS line as CI. Trusted publishing needs >= 22.14,
           # which 24 satisfies; the assertion below keeps that true if the
@@ -141,9 +159,16 @@ jobs:
       # npm >= 11.5.1 is required for OIDC. Node 24 ships something newer
       # already; this makes the requirement explicit rather than inherited,
       # so a future runner image cannot quietly drop below it.
+      #
+      # An exact version, not `latest`. This is the program that performs the
+      # OIDC exchange, builds the provenance statement and uploads the
+      # tarballs, and `latest` installed whatever the registry served at that
+      # minute. 12.1.0 is what `latest` resolved to when this was pinned; its
+      # engines (node ^22.22.2 || ^24.15.0) are met by the 24 line above. Bump
+      # it deliberately, the way ci.yml bumps the Supabase CLI.
       - name: Ensure an npm that can do OIDC
         run: |
-          npm install -g npm@latest
+          npm install -g npm@12.1.0
           echo "npm $(npm --version), node $(node --version)"
           node -e 'const [a,b]=process.versions.node.split(".").map(Number);
             if (a<22||(a===22&&b<14)) { console.error("node too old for OIDC"); process.exit(1) }'
